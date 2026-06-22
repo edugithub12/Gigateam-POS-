@@ -5,14 +5,16 @@ namespace App\Filament\Resources;
 use App\Filament\Resources\JobCardResource\Pages;
 use App\Models\JobCard;
 use App\Models\Customer;
-use App\Models\Technician;
 use App\Models\Product;
+use App\Models\User;
+use App\Mail\JobCardAssigned;
 use Filament\Forms;
 use Filament\Forms\Form;
 use Filament\Resources\Resource;
 use Filament\Tables;
 use Filament\Tables\Table;
 use Illuminate\Support\Facades\Auth;
+use Illuminate\Support\Facades\Mail;
 
 class JobCardResource extends Resource
 {
@@ -39,6 +41,12 @@ class JobCardResource extends Resource
 
     public static function form(Form $form): Form
     {
+        // Pull all users with the technician role for the dropdown
+        $technicians = User::role('technician')
+            ->where('is_active', true)
+            ->orderBy('name')
+            ->pluck('name', 'id');
+
         return $form->schema([
             Forms\Components\Section::make('Job Details')
                 ->schema([
@@ -62,9 +70,10 @@ class JobCardResource extends Resource
 
                     Forms\Components\Select::make('technician_id')
                         ->label('Assigned Technician')
-                        ->relationship('technician', 'name')
+                        ->options($technicians)
                         ->searchable()
-                        ->preload(),
+                        ->preload()
+                        ->helperText('Only active technician accounts are shown.'),
 
                     Forms\Components\TextInput::make('client_name')
                         ->required()
@@ -245,7 +254,9 @@ class JobCardResource extends Resource
 
                 Tables\Filters\SelectFilter::make('technician_id')
                     ->label('Technician')
-                    ->relationship('technician', 'name'),
+                    ->options(
+                        User::role('technician')->orderBy('name')->pluck('name', 'id')
+                    ),
 
                 Tables\Filters\SelectFilter::make('category')
                     ->options(JobCard::$categories),
@@ -272,6 +283,23 @@ class JobCardResource extends Resource
             ])
             ->defaultSort('created_at', 'desc')
             ->striped();
+    }
+
+    public static function sendTechnicianEmail(JobCard $jobCard, ?int $previousTechnicianId = null): void
+    {
+        if (! $jobCard->technician_id) return;
+
+        if ($previousTechnicianId !== null && $previousTechnicianId === $jobCard->technician_id) return;
+
+        $technician = $jobCard->technician;
+
+        if (! $technician || ! $technician->email) return;
+
+        try {
+            Mail::to($technician->email)->send(new JobCardAssigned($jobCard));
+        } catch (\Exception $e) {
+            \Log::error('JobCard email failed: ' . $e->getMessage());
+        }
     }
 
     public static function getNavigationBadge(): ?string

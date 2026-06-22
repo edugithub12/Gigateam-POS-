@@ -3,18 +3,19 @@
 namespace App\Providers;
 
 use Illuminate\Support\ServiceProvider;
-use Illuminate\Database\Eloquent\Model;
 
 class AppServiceProvider extends ServiceProvider
 {
     public function register(): void
     {
-        //
+        // Bind a null default so activeShop() never throws
+        // before SetActiveShop middleware runs (e.g. in queue workers)
+        $this->app->bind('active_shop', fn() => null);
     }
 
     public function boot(): void
     {
-        // Prevent lazy loading in local env to catch N+1 queries
-        // Model::preventLazyLoading(app()->isLocal());
+        // Load global helpers
+        require_once app_path('helpers.php');
     }
 }

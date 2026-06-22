@@ -2,6 +2,8 @@
 
 namespace App\Models;
 
+use App\Traits\LogsUserActivity;
+
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\SoftDeletes;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
@@ -12,6 +14,7 @@ use Illuminate\Support\Facades\DB;
 
 class Supplier extends Model
 {
+    use LogsUserActivity;
     use SoftDeletes;
 
     protected $fillable = [
@@ -23,6 +26,11 @@ class Supplier extends Model
         'is_active' => 'boolean',
     ];
 
+    protected static function getActivityLogName(): string
+    {
+        return 'suppliers';
+    }
+
     public function purchaseOrders(): HasMany
     {
         return $this->hasMany(PurchaseOrder::class);
@@ -33,6 +41,7 @@ class Supplier extends Model
 
 class PurchaseOrder extends Model
 {
+    use LogsUserActivity;
     use SoftDeletes;
 
     protected $fillable = [
@@ -81,6 +90,7 @@ class PurchaseOrder extends Model
 
 class PurchaseOrderItem extends Model
 {
+    use LogsUserActivity;
     protected $fillable = [
         'purchase_order_id', 'product_id',
         'quantity_ordered', 'quantity_received', 'unit_cost', 'total',

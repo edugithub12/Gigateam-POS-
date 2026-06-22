@@ -11,11 +11,22 @@ use Illuminate\Http\Response;
 
 class PdfController extends Controller
 {
-    // ── Invoice PDF ──────────────────────────────────────────────────────────
+    // ── Invoice PDF ───────────────────────────────────────────────────────────
 
     public function invoice(Invoice $invoice): Response
     {
         $invoice->load(['items', 'customer', 'createdBy']);
+
+        activity()
+            ->causedBy(auth()->user())
+            ->performedOn($invoice)
+            ->withProperties([
+                'document'  => $invoice->invoice_number,
+                'customer'  => $invoice->customer?->name,
+                'total'     => $invoice->total,
+                'ip'        => request()->ip(),
+            ])
+            ->log('Downloaded PDF — Invoice ' . $invoice->invoice_number);
 
         $pdf = Pdf::loadView('pdf.invoice', [
             'invoice' => $invoice,
@@ -40,6 +51,17 @@ class PdfController extends Controller
     {
         $quotation->load(['items', 'customer', 'createdBy', 'approvedBy']);
 
+        activity()
+            ->causedBy(auth()->user())
+            ->performedOn($quotation)
+            ->withProperties([
+                'document' => $quotation->quotation_number,
+                'customer' => $quotation->customer?->name,
+                'total'    => $quotation->total,
+                'ip'       => request()->ip(),
+            ])
+            ->log('Downloaded PDF — Quotation ' . $quotation->quotation_number);
+
         $pdf = Pdf::loadView('pdf.quotation', [
             'quotation' => $quotation,
             'company'   => $this->companyDetails(),
@@ -63,6 +85,17 @@ class PdfController extends Controller
     {
         $jobCard->load(['items', 'customer', 'technician', 'createdBy']);
 
+        activity()
+            ->causedBy(auth()->user())
+            ->performedOn($jobCard)
+            ->withProperties([
+                'document'   => $jobCard->job_number,
+                'customer'   => $jobCard->customer?->name,
+                'technician' => $jobCard->technician?->name,
+                'ip'         => request()->ip(),
+            ])
+            ->log('Downloaded PDF — Job Card ' . $jobCard->job_number);
+
         $pdf = Pdf::loadView('pdf.job-card', [
             'job'     => $jobCard,
             'company' => $this->companyDetails(),
@@ -85,6 +118,16 @@ class PdfController extends Controller
     public function deliveryNote(DeliveryNote $deliveryNote): Response
     {
         $deliveryNote->load(['items', 'customer', 'technician', 'createdBy']);
+
+        activity()
+            ->causedBy(auth()->user())
+            ->performedOn($deliveryNote)
+            ->withProperties([
+                'document' => $deliveryNote->delivery_number,
+                'customer' => $deliveryNote->customer?->name,
+                'ip'       => request()->ip(),
+            ])
+            ->log('Downloaded PDF — Delivery Note ' . $deliveryNote->delivery_number);
 
         $pdf = Pdf::loadView('pdf.delivery-note', [
             'dn'      => $deliveryNote,

@@ -2,11 +2,14 @@
 
 namespace App\Models;
 
+use App\Traits\LogsUserActivity;
+
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 
 class SaleItem extends Model
 {
+    use LogsUserActivity;
     protected $fillable = [
         'sale_id', 'product_id', 'product_name', 'product_sku', 'unit',
         'unit_price', 'cost_price', 'quantity', 'discount', 'total',

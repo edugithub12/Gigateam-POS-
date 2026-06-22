@@ -1,0 +1,903 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Gigateam POS — Offline</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        * { box-sizing: border-box; }
+        body { background: #030712; color: #f9fafb; font-family: system-ui, sans-serif; margin: 0; }
+        .scrollbar-hide::-webkit-scrollbar { display: none; }
+        .scrollbar-hide { -ms-overflow-style: none; scrollbar-width: none; }
+        input[type=number]::-webkit-inner-spin-button { -webkit-appearance: none; }
+        @media print {
+            body * { visibility: hidden; }
+            #receipt-print, #receipt-print * { visibility: visible; }
+            #receipt-print { position: fixed; top: 0; left: 0; width: 100%; }
+            .no-print { display: none !important; }
+        }
+    </style>
+</head>
+<body class="h-screen flex flex-col overflow-hidden">
+
+<!-- ── TOP NAV ── -->
+<nav class="h-14 bg-white border-b border-gray-200 flex items-center justify-between px-4 shrink-0 z-50">
+    <div class="flex items-center gap-3">
+        <img src="/images/gigateam-logo.png" alt="Gigateam" class="h-10 w-auto">
+        <div class="flex flex-col leading-tight">
+            <span style="font-family:'Arial Black',Arial,sans-serif;font-size:1rem;font-weight:900;color:#111;letter-spacing:.04em;text-transform:uppercase">Gigateam Solutions Ltd</span>
+            <span style="font-family:Georgia,serif;font-size:.72rem;font-weight:600;font-style:italic;color:#DC2626">Secured &amp; Connected</span>
+        </div>
+    </div>
+    <div class="flex items-center gap-3 text-xs">
+        <!-- Offline banner -->
+        <div id="offline-banner" class="flex items-center gap-2 bg-red-900 border border-red-700 text-red-200 px-3 py-1.5 rounded-lg">
+            <span class="w-2 h-2 rounded-full bg-red-400 animate-pulse inline-block"></span>
+            <span id="banner-text">OFFLINE MODE</span>
+        </div>
+        <span id="pos-clock" class="font-mono text-gray-700 font-semibold"></span>
+        <span id="nav-user" class="text-gray-700"></span>
+        <a href="/pos" class="text-red-600 hover:text-red-500 font-medium">Online POS →</a>
+    </div>
+</nav>
+
+<!-- ── SYNC TOAST ── -->
+<div id="sync-toast" class="hidden fixed top-16 right-4 z-50 bg-green-900 border border-green-700 text-green-200 px-4 py-2.5 rounded-lg text-sm shadow-xl"></div>
+<div id="error-toast" class="hidden fixed top-16 right-4 z-50 bg-red-900 border border-red-700 text-red-200 px-4 py-2.5 rounded-lg text-sm shadow-xl"></div>
+
+<!-- ── QUEUED SALES BADGE ── -->
+<div id="queue-bar" class="hidden bg-yellow-900 border-b border-yellow-700 text-yellow-200 text-xs px-4 py-1.5 text-center">
+    <span id="queue-count">0</span> offline sale(s) queued — will sync automatically when internet returns
+</div>
+
+<!-- ── MAIN POS ── -->
+<div class="flex flex-1 overflow-hidden" id="pos-main">
+
+    <!-- LEFT: Products -->
+    <div class="flex flex-col flex-1 min-w-0 border-r border-gray-800">
+
+        <!-- Search + categories -->
+        <div class="bg-gray-900 border-b border-gray-800 p-3 space-y-2 shrink-0">
+            <div class="relative">
+                <svg class="absolute left-3 top-2.5 w-4 h-4 text-gray-500 pointer-events-none" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"/>
+                </svg>
+                <input id="product-search" type="text" placeholder="Search product or SKU..."
+                    class="w-full bg-gray-800 text-gray-100 placeholder-gray-500 rounded-lg pl-9 pr-4 py-2 text-sm border border-gray-700 focus:border-red-500 focus:outline-none"/>
+            </div>
+            <div id="category-pills" class="flex gap-1.5 overflow-x-auto pb-0.5 scrollbar-hide"></div>
+        </div>
+
+        <!-- Product grid -->
+        <div class="flex-1 overflow-y-auto p-3">
+            <div id="product-grid" class="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 2xl:grid-cols-6 gap-2"></div>
+            <div id="no-products" class="hidden flex flex-col items-center justify-center h-48 text-gray-600">
+                <p class="text-sm">No products found</p>
+            </div>
+            <div id="loading-products" class="flex flex-col items-center justify-center h-48 text-gray-600">
+                <p class="text-sm animate-pulse">Loading products...</p>
+            </div>
+        </div>
+    </div>
+
+    <!-- RIGHT: Cart -->
+    <div class="flex flex-col w-96 shrink-0 bg-gray-900">
+
+        <!-- Customer search -->
+        <div class="p-3 border-b border-gray-800 shrink-0 relative">
+            <div id="customer-selected" class="hidden items-center justify-between bg-red-950 border border-red-800 rounded-lg px-3 py-2">
+                <div>
+                    <p id="selected-customer-name" class="text-sm font-medium text-red-200"></p>
+                    <p id="selected-customer-phone" class="text-xs text-red-400"></p>
+                </div>
+                <button id="clear-customer" class="text-red-500 hover:text-red-300 ml-2">
+                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/>
+                    </svg>
+                </button>
+            </div>
+            <div id="customer-search-wrap">
+                <input id="customer-search" type="text" placeholder="Search customer (optional)..."
+                    class="w-full bg-gray-800 text-gray-300 placeholder-gray-600 rounded-lg px-3 py-2 text-sm border border-gray-700 focus:border-red-500 focus:outline-none"/>
+                <div id="customer-suggestions" class="hidden absolute left-3 right-3 mt-1 bg-gray-800 border border-gray-700 rounded-lg shadow-xl z-20 overflow-hidden"></div>
+            </div>
+        </div>
+
+        <!-- Cart items -->
+        <div class="flex-1 overflow-y-auto" id="cart-container">
+            <div id="cart-empty" class="flex flex-col items-center justify-center h-full text-gray-700 select-none">
+                <svg class="w-16 h-16 mb-3 opacity-30" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1" d="M3 3h2l.4 2M7 13h10l4-8H5.4M7 13L5.4 5M7 13l-2.293 2.293c-.63.63-.184 1.707.707 1.707H17m0 0a2 2 0 100 4 2 2 0 000-4zm-8 2a2 2 0 11-4 0 2 2 0 014 0z"/>
+                </svg>
+                <p class="text-sm font-medium text-gray-600">Cart is empty</p>
+                <p class="text-xs text-gray-700 mt-1">Click a product to add</p>
+            </div>
+            <div id="cart-items" class="divide-y divide-gray-800"></div>
+        </div>
+
+        <!-- Totals -->
+        <div class="border-t border-gray-800 p-3 space-y-2 shrink-0">
+            <div class="flex gap-2 items-end">
+                <div class="flex-1">
+                    <label class="text-xs text-gray-500 block mb-1">Discount (KES)</label>
+                    <input id="discount-input" type="number" value="0" min="0" step="0.01"
+                        class="w-full bg-gray-800 border border-gray-700 rounded-lg text-sm px-3 py-1.5 text-gray-200 focus:border-red-500 focus:outline-none"/>
+                </div>
+                <label class="flex items-center gap-1.5 pb-1.5 cursor-pointer">
+                    <input type="checkbox" id="vat-toggle" class="rounded bg-gray-700 border-gray-600 text-red-600">
+                    <span class="text-xs text-gray-400">VAT 16%</span>
+                </label>
+            </div>
+
+            <div class="bg-gray-800 rounded-xl p-3 space-y-1.5">
+                <div class="flex justify-between text-sm text-gray-400">
+                    <span>Subtotal</span><span id="disp-subtotal">KES 0.00</span>
+                </div>
+                <div id="disp-discount-row" class="hidden flex justify-between text-sm text-red-400">
+                    <span>Discount</span><span id="disp-discount">− KES 0.00</span>
+                </div>
+                <div id="disp-vat-row" class="hidden flex justify-between text-sm text-gray-400">
+                    <span>VAT (16%)</span><span id="disp-vat">KES 0.00</span>
+                </div>
+                <div class="flex justify-between font-bold text-base text-white pt-1 border-t border-gray-700">
+                    <span>TOTAL</span><span id="disp-total" class="text-green-400">KES 0.00</span>
+                </div>
+            </div>
+
+            <div class="grid grid-cols-2 gap-2">
+                <button id="btn-clear" class="py-2.5 rounded-xl text-sm font-medium bg-gray-800 text-gray-400 hover:bg-gray-700 border border-gray-700 transition">Clear</button>
+                <button id="btn-charge" class="py-2.5 rounded-xl text-sm font-bold bg-red-600 hover:bg-red-500 text-white transition opacity-40 cursor-not-allowed" disabled>
+                    Charge KES 0.00
+                </button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- ── PAYMENT MODAL ── -->
+<div id="payment-modal" class="hidden fixed inset-0 bg-black/80 z-50 overflow-y-auto">
+<div class="min-h-full flex items-center justify-center p-4">
+<div class="bg-gray-900 border border-gray-700 rounded-2xl w-full max-w-md shadow-2xl">
+    <div class="flex items-center justify-between p-5 border-b border-gray-800">
+        <h2 class="text-lg font-bold text-white">Payment</h2>
+        <button id="close-payment" class="text-gray-500 hover:text-white">✕</button>
+    </div>
+    <div class="p-5 space-y-3">
+        <div class="text-center py-2">
+            <p class="text-sm text-gray-400">Total Due</p>
+            <p id="modal-total" class="text-4xl font-bold text-green-400">KES 0.00</p>
+        </div>
+
+        <!-- Payment methods -->
+        <div id="payment-methods" class="space-y-2"></div>
+
+        <!-- Summary -->
+        <div class="bg-gray-800 rounded-xl p-3 space-y-1.5">
+            <div class="flex justify-between text-sm text-gray-400">
+                <span>Tendered</span><span id="modal-tendered">KES 0.00</span>
+            </div>
+            <div id="modal-change-row" class="hidden flex justify-between text-sm font-bold text-yellow-400">
+                <span>Change</span><span id="modal-change">KES 0.00</span>
+            </div>
+            <div id="modal-balance-row" class="hidden flex justify-between text-sm font-bold text-red-400">
+                <span>Balance Due</span><span id="modal-balance">KES 0.00</span>
+            </div>
+        </div>
+    </div>
+    <div class="p-5 pt-0">
+        <button id="btn-complete-sale" class="w-full py-3.5 rounded-xl font-bold text-white text-base bg-green-600 hover:bg-green-500 transition">
+            ✔ Complete Sale
+        </button>
+    </div>
+</div>
+</div>
+</div>
+
+<!-- ── RECEIPT MODAL ── -->
+<div id="receipt-modal" class="hidden fixed inset-0 bg-black/80 z-50 overflow-y-auto">
+<div class="min-h-full flex items-center justify-center p-4 py-6">
+<div class="bg-white w-full max-w-lg shadow-2xl text-gray-900 rounded-2xl overflow-hidden">
+    <div id="receipt-print" style="font-family:Arial,sans-serif;font-size:13px;color:#1a1a1a">
+        <div style="display:flex;align-items:center;justify-content:space-between;padding:20px 24px 12px">
+            <img src="/images/gigateam-logo.png" style="height:56px;width:auto">
+            <div style="text-align:right;font-size:11px;color:#555">
+                <div style="font-weight:700;font-size:13px;color:#111">GIGATEAM SOLUTIONS LTD</div>
+                <div>White Angle House, 1st Floor – Suite 62</div>
+                <div>P.O Box 47271-00100, Nairobi</div>
+                <div>+254 111292948 / 718811661</div>
+                <div>sales@gigateamltd.com</div>
+            </div>
+        </div>
+        <div style="background:#DC2626;padding:10px 24px;text-align:center">
+            <div style="font-size:22px;font-weight:900;letter-spacing:4px;color:#fff">RECEIPT</div>
+            <div style="font-size:10px;color:#fecaca;margin-top:2px">⚡ OFFLINE SALE — Will sync when online</div>
+        </div>
+        <div style="display:flex;background:#f5f5f5;border-bottom:2px solid #DC2626">
+            <div style="flex:1;padding:10px 24px;border-right:1px solid #ddd">
+                <div style="font-size:10px;font-weight:700;color:#DC2626;text-transform:uppercase">Receipt No.</div>
+                <div id="rcpt-ref" style="font-weight:700;margin-top:2px"></div>
+            </div>
+            <div style="flex:1;padding:10px 24px;border-right:1px solid #ddd">
+                <div style="font-size:10px;font-weight:700;color:#DC2626;text-transform:uppercase">Date & Time</div>
+                <div id="rcpt-date" style="font-weight:700;margin-top:2px"></div>
+            </div>
+            <div style="flex:1;padding:10px 24px">
+                <div style="font-size:10px;font-weight:700;color:#DC2626;text-transform:uppercase">Payment</div>
+                <div id="rcpt-method" style="font-weight:700;margin-top:2px"></div>
+            </div>
+        </div>
+        <div style="display:flex;padding:14px 24px;gap:24px;border-bottom:1px solid #eee">
+            <div style="flex:1">
+                <div style="font-size:10px;font-weight:700;color:#DC2626;text-transform:uppercase;margin-bottom:4px">Customer</div>
+                <div id="rcpt-customer" style="font-weight:700;font-size:14px"></div>
+            </div>
+            <div style="flex:1">
+                <div style="font-size:10px;font-weight:700;color:#DC2626;text-transform:uppercase;margin-bottom:4px">Served By</div>
+                <div id="rcpt-cashier" style="font-weight:700;font-size:14px"></div>
+            </div>
+        </div>
+        <div style="padding:0 24px">
+            <table style="width:100%;border-collapse:collapse;margin-top:4px">
+                <thead>
+                    <tr style="border-bottom:2px solid #DC2626">
+                        <th style="text-align:left;padding:8px 0;font-size:10px;font-weight:700;color:#DC2626;text-transform:uppercase;width:40%">Description</th>
+                        <th style="text-align:center;padding:8px 0;font-size:10px;font-weight:700;color:#DC2626;text-transform:uppercase">Qty</th>
+                        <th style="text-align:right;padding:8px 0;font-size:10px;font-weight:700;color:#DC2626;text-transform:uppercase">Price</th>
+                        <th style="text-align:right;padding:8px 0;font-size:10px;font-weight:700;color:#DC2626;text-transform:uppercase">Total</th>
+                    </tr>
+                </thead>
+                <tbody id="rcpt-items"></tbody>
+            </table>
+        </div>
+        <div style="padding:10px 24px;border-top:2px solid #DC2626;margin:0 24px" id="rcpt-totals"></div>
+        <div style="background:#DC2626;padding:10px 24px;display:flex;align-items:center;justify-content:space-between;margin-top:16px">
+            <span style="color:#fff;font-weight:700;font-size:12px">Goods sold are NOT returnable</span>
+            <span style="color:#fecaca;font-size:11px">Thank you for your business!</span>
+        </div>
+    </div>
+    <div class="p-4 flex gap-3 border-t border-gray-100 no-print">
+        <button onclick="window.print()" class="flex-1 py-2.5 rounded-xl border border-gray-300 text-sm font-medium hover:bg-gray-50 text-gray-700">🖨 Print</button>
+        <button id="btn-new-sale" class="flex-1 py-2.5 rounded-xl bg-red-600 text-white text-sm font-bold hover:bg-red-500">New Sale</button>
+    </div>
+</div>
+</div>
+</div>
+
+<script>
+// ══════════════════════════════════════════════════════════════════════════════
+// GIGATEAM OFFLINE POS
+// ══════════════════════════════════════════════════════════════════════════════
+
+const DB_NAME    = 'gigateam_pos';
+const DB_VERSION = 1;
+let db, allProducts = [], allCustomers = [], cart = [], selectedCustomer = null;
+let currentUser = null;
+
+// ── IndexedDB setup ───────────────────────────────────────────────────────────
+function openDB() {
+    return new Promise((resolve, reject) => {
+        const req = indexedDB.open(DB_NAME, DB_VERSION);
+        req.onupgradeneeded = e => {
+            const d = e.target.result;
+            if (!d.objectStoreNames.contains('products'))  d.createObjectStore('products',  { keyPath: 'id' });
+            if (!d.objectStoreNames.contains('customers')) d.createObjectStore('customers', { keyPath: 'id' });
+            if (!d.objectStoreNames.contains('queue'))     d.createObjectStore('queue',     { keyPath: 'offline_id' });
+            if (!d.objectStoreNames.contains('meta'))      d.createObjectStore('meta',      { keyPath: 'key' });
+        };
+        req.onsuccess = e => resolve(e.target.result);
+        req.onerror   = e => reject(e.target.error);
+    });
+}
+
+function dbGetAll(store) {
+    return new Promise((resolve, reject) => {
+        const tx  = db.transaction(store, 'readonly');
+        const req = tx.objectStore(store).getAll();
+        req.onsuccess = e => resolve(e.target.result);
+        req.onerror   = e => reject(e.target.error);
+    });
+}
+
+function dbPutAll(store, items) {
+    return new Promise((resolve, reject) => {
+        const tx = db.transaction(store, 'readwrite');
+        const os = tx.objectStore(store);
+        items.forEach(item => os.put(item));
+        tx.oncomplete = resolve;
+        tx.onerror    = e => reject(e.target.error);
+    });
+}
+
+function dbPut(store, item) {
+    return new Promise((resolve, reject) => {
+        const tx  = db.transaction(store, 'readwrite');
+        const req = tx.objectStore(store).put(item);
+        req.onsuccess = resolve;
+        req.onerror   = e => reject(e.target.error);
+    });
+}
+
+function dbDelete(store, key) {
+    return new Promise((resolve, reject) => {
+        const tx  = db.transaction(store, 'readwrite');
+        const req = tx.objectStore(store).delete(key);
+        req.onsuccess = resolve;
+        req.onerror   = e => reject(e.target.error);
+    });
+}
+
+// ── Fetch and cache products/customers ───────────────────────────────────────
+async function syncFromServer() {
+    try {
+        const [pRes, cRes] = await Promise.all([
+            fetch('/pos-offline/products',  { credentials: 'same-origin' }),
+            fetch('/pos-offline/customers', { credentials: 'same-origin' }),
+        ]);
+
+        if (pRes.ok) {
+            const pData = await pRes.json();
+            await dbPutAll('products', pData.products);
+            await dbPut('meta', { key: 'products_synced_at', value: pData.synced_at });
+            allProducts = pData.products;
+        }
+
+        if (cRes.ok) {
+            const cData = await cRes.json();
+            await dbPutAll('customers', cData.customers);
+            allCustomers = cData.customers;
+        }
+
+        await dbPut('meta', { key: 'last_sync', value: new Date().toISOString() });
+        showToast('✅ Products synced — ' + allProducts.length + ' items', 'success');
+    } catch (e) {
+        // Offline — load from IndexedDB
+        allProducts  = await dbGetAll('products');
+        allCustomers = await dbGetAll('customers');
+    }
+}
+
+// ── Load user from session ────────────────────────────────────────────────────
+async function loadUser() {
+    try {
+        const res  = await fetch('/pos-offline/user', { credentials: 'same-origin' });
+        if (res.ok) {
+            const data = await res.json();
+            currentUser = data.name;
+            document.getElementById('nav-user').textContent = data.name;
+        }
+    } catch (e) {
+        const stored = localStorage.getItem('pos_user');
+        if (stored) { currentUser = stored; document.getElementById('nav-user').textContent = stored; }
+    }
+}
+
+// ── Clock ─────────────────────────────────────────────────────────────────────
+function tick() {
+    const el = document.getElementById('pos-clock');
+    if (el) el.textContent = new Date().toLocaleTimeString('en-KE', { hour:'2-digit', minute:'2-digit', second:'2-digit' });
+}
+tick(); setInterval(tick, 1000);
+
+// ── Product grid ──────────────────────────────────────────────────────────────
+let activeCategoryId = null;
+let searchQuery      = '';
+
+function renderCategories() {
+    const cats = [...new Set(allProducts.map(p => JSON.stringify({ id: p.category_id, name: p.category })))]
+        .map(s => JSON.parse(s))
+        .filter(c => c.id)
+        .sort((a, b) => a.name.localeCompare(b.name));
+
+    const wrap = document.getElementById('category-pills');
+    wrap.innerHTML = `<button onclick="filterCategory(null, this)"
+        class="shrink-0 px-3 py-1 rounded-full text-xs font-medium bg-red-600 text-white transition">All</button>`;
+    cats.forEach(c => {
+        wrap.innerHTML += `<button onclick="filterCategory(${c.id}, this)"
+            class="shrink-0 px-3 py-1 rounded-full text-xs font-medium bg-gray-800 text-gray-400 hover:bg-gray-700 transition">${c.name}</button>`;
+    });
+}
+
+function filterCategory(id, btn) {
+    activeCategoryId = id;
+    document.querySelectorAll('#category-pills button').forEach(b =>
+        b.className = b.className.replace('bg-red-600 text-white', 'bg-gray-800 text-gray-400 hover:bg-gray-700'));
+    btn.className = btn.className.replace('bg-gray-800 text-gray-400 hover:bg-gray-700', 'bg-red-600 text-white');
+    renderProducts();
+}
+
+function renderProducts() {
+    const q       = searchQuery.toLowerCase();
+    const grid    = document.getElementById('product-grid');
+    const noProds = document.getElementById('no-products');
+    document.getElementById('loading-products').classList.add('hidden');
+
+    let filtered = allProducts.filter(p => {
+        const matchSearch = !q || p.name.toLowerCase().includes(q) || (p.sku || '').toLowerCase().includes(q);
+        const matchCat    = !activeCategoryId || p.category_id === activeCategoryId;
+        return matchSearch && matchCat;
+    });
+
+    if (filtered.length === 0) {
+        grid.innerHTML = '';
+        noProds.classList.remove('hidden');
+        return;
+    }
+    noProds.classList.add('hidden');
+
+    grid.innerHTML = filtered.map(p => {
+        const outOfStock = !p.is_service && p.stock_quantity <= 0;
+        const lowStock   = !p.is_service && p.stock_quantity > 0 && p.stock_quantity <= 5;
+        const stockLabel = p.is_service ? '<span class="text-[10px] text-purple-400">SVC</span>'
+            : outOfStock ? '<span class="text-[10px] text-red-400 font-medium">OUT</span>'
+            : lowStock   ? `<span class="text-[10px] text-yellow-400">${p.stock_quantity}</span>`
+            :              `<span class="text-[10px] text-gray-500">${p.stock_quantity}</span>`;
+
+        // ── Product image or placeholder ──────────────────────────────────────
+        const imageHtml = p.image
+            ? `<img src="${p.image}" alt="${p.name}"
+                    class="w-full h-24 object-cover rounded-lg mb-2 group-hover:scale-105 transition-transform duration-150"
+                    onerror="this.replaceWith(document.getElementById('img-placeholder-${p.id}'))"/>`
+            : '';
+        const placeholderHtml = `<div id="img-placeholder-${p.id}"
+                class="w-full h-24 rounded-lg mb-2 bg-gray-700 flex items-center justify-center">
+                <svg class="w-8 h-8 text-gray-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5"
+                        d="M20 7H4a2 2 0 00-2 2v9a2 2 0 002 2h16a2 2 0 002-2V9a2 2 0 00-2-2z"/>
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5"
+                        d="M16 3H8L6 7h12l-2-4z"/>
+                </svg>
+            </div>`;
+
+        return `<button onclick="addToCart(${p.id})" ${outOfStock ? 'disabled' : ''}
+            class="relative text-left rounded-xl p-3 border transition-all duration-150 group focus:outline-none
+                ${outOfStock ? 'bg-gray-900 border-gray-800 opacity-40 cursor-not-allowed'
+                             : 'bg-gray-800 border-gray-700 hover:border-red-500 active:scale-95 cursor-pointer'}">
+            ${p.image ? imageHtml : placeholderHtml}
+            <span class="inline-block text-[10px] text-red-400 bg-red-900/30 rounded px-1.5 py-0.5 mb-1.5 leading-none truncate max-w-full">${p.category}</span>
+            <p class="text-xs font-medium text-gray-100 leading-snug line-clamp-2 mb-2 min-h-[2.5rem]">${p.name}</p>
+            <div class="flex items-end justify-between">
+                <span class="text-sm font-bold text-green-400">${p.selling_price.toLocaleString()}</span>
+                ${stockLabel}
+            </div>
+        </button>`;
+    }).join('');
+}
+
+// ── Cart ──────────────────────────────────────────────────────────────────────
+function addToCart(productId) {
+    const p = allProducts.find(x => x.id === productId);
+    if (!p) return;
+    if (!p.is_service && p.stock_quantity <= 0) { showToast('Out of stock: ' + p.name, 'error'); return; }
+
+    const idx = cart.findIndex(i => i.product_id === productId);
+    if (idx >= 0) {
+        const newQty = cart[idx].quantity + 1;
+        if (!p.is_service && newQty > p.stock_quantity) { showToast('Only ' + p.stock_quantity + ' in stock', 'warning'); return; }
+        cart[idx].quantity = newQty;
+        cart[idx].total    = round2((cart[idx].unit_price * newQty) - cart[idx].discount);
+    } else {
+        cart.push({
+            product_id:      p.id,
+            name:            p.name,
+            sku:             p.sku,
+            unit:            p.unit,
+            unit_price:      p.selling_price,
+            cost_price:      p.cost_price,
+            quantity:        1,
+            discount:        0,
+            total:           p.selling_price,
+            stock_available: p.stock_quantity,
+            is_service:      p.is_service,
+        });
+    }
+    renderCart();
+}
+
+function removeFromCart(idx) { cart.splice(idx, 1); renderCart(); }
+
+function updateQty(idx, qty) {
+    qty = parseInt(qty);
+    if (qty <= 0) { removeFromCart(idx); return; }
+    if (!cart[idx].is_service && qty > cart[idx].stock_available) qty = cart[idx].stock_available;
+    cart[idx].quantity = qty;
+    cart[idx].total    = round2((cart[idx].unit_price * qty) - cart[idx].discount);
+    renderCart();
+}
+
+function updatePrice(idx, price) {
+    price = Math.max(0, parseFloat(price) || 0);
+    cart[idx].unit_price = price;
+    cart[idx].total      = round2((price * cart[idx].quantity) - cart[idx].discount);
+    renderCart();
+}
+
+function renderCart() {
+    const empty = document.getElementById('cart-empty');
+    const items = document.getElementById('cart-items');
+
+    if (cart.length === 0) {
+        empty.classList.remove('hidden'); items.innerHTML = ''; updateTotals(); return;
+    }
+    empty.classList.add('hidden');
+
+    items.innerHTML = cart.map((item, i) => `
+        <div class="p-3 group">
+            <div class="flex items-start justify-between gap-2 mb-2">
+                <div class="flex-1 min-w-0">
+                    <p class="text-sm font-medium text-gray-100 truncate">${item.name}</p>
+                    <p class="text-xs text-gray-500 font-mono">${item.sku || ''}</p>
+                </div>
+                <button onclick="removeFromCart(${i})" class="opacity-0 group-hover:opacity-100 text-gray-600 hover:text-red-400 transition mt-0.5">
+                    <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/>
+                    </svg>
+                </button>
+            </div>
+            <div class="flex items-center gap-2">
+                <div class="flex items-center bg-gray-800 rounded-lg border border-gray-700 overflow-hidden">
+                    <button onclick="updateQty(${i}, ${item.quantity - 1})" class="w-7 h-7 flex items-center justify-center text-gray-400 hover:text-white hover:bg-gray-700 transition text-base">−</button>
+                    <input type="number" value="${item.quantity}" onchange="updateQty(${i}, this.value)"
+                        class="w-9 text-center bg-transparent text-gray-100 text-sm py-0.5 focus:outline-none" min="1"/>
+                    <button onclick="updateQty(${i}, ${item.quantity + 1})" class="w-7 h-7 flex items-center justify-center text-gray-400 hover:text-white hover:bg-gray-700 transition text-base">+</button>
+                </div>
+                <div class="flex-1 relative">
+                    <span class="absolute left-2 top-1/2 -translate-y-1/2 text-[10px] text-gray-500">KES</span>
+                    <input type="number" value="${item.unit_price}" onchange="updatePrice(${i}, this.value)"
+                        class="w-full bg-gray-800 border border-gray-700 rounded-lg text-xs text-right pr-2 pl-7 py-1.5 text-gray-200 focus:border-red-500 focus:outline-none" step="0.01" min="0"/>
+                </div>
+                <div class="w-20 text-right">
+                    <p class="text-sm font-semibold text-green-400">KES ${item.total.toLocaleString(undefined, {minimumFractionDigits:2, maximumFractionDigits:2})}</p>
+                </div>
+            </div>
+        </div>`).join('');
+
+    updateTotals();
+}
+
+function getDiscount()  { return Math.max(0, parseFloat(document.getElementById('discount-input').value) || 0); }
+function isVat()        { return document.getElementById('vat-toggle').checked; }
+
+function calcTotals() {
+    const subtotal = cart.reduce((s, i) => s + i.total, 0);
+    const discount = getDiscount();
+    const taxable  = Math.max(0, subtotal - discount);
+    const vat      = isVat() ? round2(taxable * 0.16) : 0;
+    const total    = round2(taxable + vat);
+    return { subtotal, discount, taxable, vat, total };
+}
+
+function updateTotals() {
+    const { subtotal, discount, vat, total } = calcTotals();
+    const fmt = n => 'KES ' + n.toLocaleString(undefined, {minimumFractionDigits:2, maximumFractionDigits:2});
+
+    document.getElementById('disp-subtotal').textContent = fmt(subtotal);
+    document.getElementById('disp-discount').textContent = '− ' + fmt(discount);
+    document.getElementById('disp-discount-row').classList.toggle('hidden', discount <= 0);
+    document.getElementById('disp-vat').textContent = fmt(vat);
+    document.getElementById('disp-vat-row').classList.toggle('hidden', vat <= 0);
+    document.getElementById('disp-total').textContent = fmt(total);
+
+    const btn = document.getElementById('btn-charge');
+    btn.textContent = 'Charge KES ' + total.toLocaleString(undefined, {minimumFractionDigits:2, maximumFractionDigits:2});
+    btn.disabled = cart.length === 0;
+    btn.classList.toggle('opacity-40', cart.length === 0);
+    btn.classList.toggle('cursor-not-allowed', cart.length === 0);
+}
+
+// ── Customer search ───────────────────────────────────────────────────────────
+document.getElementById('customer-search').addEventListener('input', function () {
+    const q    = this.value.toLowerCase();
+    const sugg = document.getElementById('customer-suggestions');
+    if (q.length < 2) { sugg.classList.add('hidden'); return; }
+
+    const matches = allCustomers.filter(c =>
+        c.display_name.toLowerCase().includes(q) || (c.phone || '').includes(q)
+    ).slice(0, 6);
+
+    if (matches.length === 0) { sugg.classList.add('hidden'); return; }
+
+    sugg.innerHTML = matches.map(c => `
+        <button onclick="selectCustomer(${c.id})" class="w-full text-left px-3 py-2.5 hover:bg-gray-700 transition border-b border-gray-700 last:border-0">
+            <p class="text-sm text-gray-200 font-medium">${c.display_name}</p>
+            <p class="text-xs text-gray-500">${c.phone} · ${c.type}</p>
+        </button>`).join('');
+    sugg.classList.remove('hidden');
+});
+
+function selectCustomer(id) {
+    selectedCustomer = allCustomers.find(c => c.id === id);
+    if (!selectedCustomer) return;
+    document.getElementById('customer-search-wrap').classList.add('hidden');
+    const sel = document.getElementById('customer-selected');
+    sel.classList.remove('hidden'); sel.classList.add('flex');
+    document.getElementById('selected-customer-name').textContent  = selectedCustomer.display_name;
+    document.getElementById('selected-customer-phone').textContent = selectedCustomer.phone || 'No phone';
+    document.getElementById('customer-suggestions').classList.add('hidden');
+}
+
+document.getElementById('clear-customer').addEventListener('click', () => {
+    selectedCustomer = null;
+    document.getElementById('customer-selected').classList.add('hidden');
+    document.getElementById('customer-selected').classList.remove('flex');
+    document.getElementById('customer-search-wrap').classList.remove('hidden');
+    document.getElementById('customer-search').value = '';
+});
+
+// ── Payment modal ─────────────────────────────────────────────────────────────
+const PAYMENT_METHODS = [
+    { key:'cash',          label:'Cash',          icon:'💵' },
+    { key:'mpesa',         label:'M-Pesa (manual ref only)',icon:'📱' },
+    { key:'bank_transfer', label:'Bank Transfer',  icon:'🏦' },
+    { key:'cheque',        label:'Cheque',         icon:'🗒️' },
+    { key:'credit',        label:'Credit',         icon:'📋' },
+];
+
+let paymentAmounts = {};
+
+function openPaymentModal() {
+    if (cart.length === 0) return;
+    const { total } = calcTotals();
+    paymentAmounts = { cash: total, mpesa: 0, bank_transfer: 0, cheque: 0, credit: 0 };
+
+    document.getElementById('modal-total').textContent = 'KES ' + total.toLocaleString(undefined, {minimumFractionDigits:2});
+
+    document.getElementById('payment-methods').innerHTML = PAYMENT_METHODS.map(m => `
+        <div class="bg-gray-800 rounded-xl p-3">
+            <div class="flex items-center gap-2 mb-2">
+                <span class="text-sm">${m.icon}</span>
+                <span class="text-sm font-medium text-gray-300">${m.label}</span>
+                ${m.key === 'mpesa' ? '<span class="text-xs text-yellow-400 ml-auto">STK push unavailable offline</span>' : ''}
+            </div>
+            <div class="flex gap-2">
+                <div class="flex-1 relative">
+                    <span class="absolute left-2 top-1/2 -translate-y-1/2 text-xs text-gray-500">KES</span>
+                    <input type="number" id="pay-${m.key}" value="${m.key === 'cash' ? total.toFixed(2) : '0'}"
+                        min="0" step="0.01" onchange="updatePaymentTotals()"
+                        class="w-full bg-gray-700 border border-gray-600 rounded-lg text-sm pl-9 pr-2 py-2 text-gray-100 focus:border-red-500 focus:outline-none"/>
+                </div>
+                ${m.key !== 'cash' ? `<input type="text" id="ref-${m.key}" placeholder="Reference"
+                    class="flex-1 bg-gray-700 border border-gray-600 rounded-lg text-sm px-3 py-2 text-gray-100 placeholder-gray-500 focus:border-red-500 focus:outline-none"/>` : ''}
+            </div>
+        </div>`).join('');
+
+    updatePaymentTotals();
+    document.getElementById('payment-modal').classList.remove('hidden');
+}
+
+function updatePaymentTotals() {
+    const { total } = calcTotals();
+    const tendered  = PAYMENT_METHODS.reduce((s, m) => s + (parseFloat(document.getElementById('pay-' + m.key)?.value) || 0), 0);
+    const change    = Math.max(0, tendered - total);
+    const balance   = Math.max(0, total - tendered);
+    const fmt       = n => 'KES ' + n.toLocaleString(undefined, {minimumFractionDigits:2, maximumFractionDigits:2});
+
+    document.getElementById('modal-tendered').textContent = fmt(tendered);
+    document.getElementById('modal-change').textContent   = fmt(change);
+    document.getElementById('modal-balance').textContent  = fmt(balance);
+    document.getElementById('modal-change-row').classList.toggle('hidden', change <= 0);
+    document.getElementById('modal-balance-row').classList.toggle('hidden', balance <= 0);
+}
+
+document.getElementById('close-payment').addEventListener('click', () =>
+    document.getElementById('payment-modal').classList.add('hidden'));
+
+// ── Complete sale ─────────────────────────────────────────────────────────────
+document.getElementById('btn-complete-sale').addEventListener('click', async () => {
+    const { subtotal, discount, vat, total } = calcTotals();
+    const tendered = PAYMENT_METHODS.reduce((s, m) => s + (parseFloat(document.getElementById('pay-' + m.key)?.value) || 0), 0);
+
+    if (tendered < total && !selectedCustomer) {
+        showToast('Amount less than total. Assign a customer for credit.', 'error'); return;
+    }
+
+    const payments = PAYMENT_METHODS
+        .map(m => ({
+            method:    m.key,
+            amount:    parseFloat(document.getElementById('pay-' + m.key)?.value) || 0,
+            reference: document.getElementById('ref-' + m.key)?.value || '',
+        }))
+        .filter(p => p.amount > 0);
+
+    const offlineId = 'OFF-' + Date.now() + '-' + Math.random().toString(36).substr(2, 6).toUpperCase();
+    const now       = new Date();
+
+    const sale = {
+        offline_id:     offlineId,
+        customer_id:    selectedCustomer?.id ?? null,
+        customer_name:  selectedCustomer?.display_name ?? 'Walk-in Customer',
+        customer_phone: selectedCustomer?.phone ?? null,
+        cart:           [...cart],
+        subtotal,
+        discount,
+        vat,
+        total,
+        tendered,
+        change:         Math.max(0, tendered - total),
+        apply_vat:      isVat(),
+        payments,
+        notes:          '',
+        cashier:        currentUser ?? 'Cashier',
+        created_at:     now.toISOString(),
+    };
+
+    // Save to queue
+    await dbPut('queue', sale);
+    updateQueueBadge();
+
+    // Show receipt
+    showReceipt(sale);
+
+    // Try to sync immediately if online
+    if (navigator.onLine) syncQueue();
+});
+
+// ── Receipt ───────────────────────────────────────────────────────────────────
+function showReceipt(sale) {
+    document.getElementById('payment-modal').classList.add('hidden');
+
+    document.getElementById('rcpt-ref').textContent      = sale.offline_id;
+    document.getElementById('rcpt-date').textContent     = new Date(sale.created_at).toLocaleString('en-KE');
+    document.getElementById('rcpt-customer').textContent = sale.customer_name;
+    document.getElementById('rcpt-cashier').textContent  = sale.cashier;
+    document.getElementById('rcpt-method').textContent   = sale.payments.map(p => p.method.replace('_',' ')).join(', ');
+
+    document.getElementById('rcpt-items').innerHTML = sale.cart.map(item => `
+        <tr style="border-bottom:1px solid #f0f0f0">
+            <td style="padding:8px 0;font-size:12px">${item.name}</td>
+            <td style="padding:8px 0;text-align:center;font-size:12px">${item.quantity}</td>
+            <td style="padding:8px 0;text-align:right;font-size:12px">${item.unit_price.toFixed(2)}</td>
+            <td style="padding:8px 0;text-align:right;font-size:12px;font-weight:600">${item.total.toFixed(2)}</td>
+        </tr>`).join('');
+
+    let totalsHtml = '';
+    if (sale.discount > 0) totalsHtml += `<div style="display:flex;justify-content:space-between;padding:3px 0;font-size:12px;color:#555"><span>Discount</span><span style="color:#DC2626">- KES ${sale.discount.toFixed(2)}</span></div>`;
+    if (sale.vat > 0)      totalsHtml += `<div style="display:flex;justify-content:space-between;padding:3px 0;font-size:12px;color:#555"><span>VAT (16%)</span><span>KES ${sale.vat.toFixed(2)}</span></div>`;
+    sale.payments.forEach(p => {
+        totalsHtml += `<div style="display:flex;justify-content:space-between;padding:3px 0;font-size:12px;color:#555"><span>${p.method.replace('_',' ')}</span><span>KES ${p.amount.toFixed(2)}</span></div>`;
+    });
+    if (sale.change > 0)   totalsHtml += `<div style="display:flex;justify-content:space-between;padding:3px 0;font-size:12px;color:#555"><span>Change</span><span>KES ${sale.change.toFixed(2)}</span></div>`;
+    totalsHtml += `<div style="display:flex;justify-content:space-between;padding:8px 0 4px;font-size:16px;font-weight:900;border-top:1px solid #eee;margin-top:6px"><span>TOTAL</span><span style="color:#DC2626">KES ${sale.total.toFixed(2)}</span></div>`;
+    document.getElementById('rcpt-totals').innerHTML = totalsHtml;
+
+    document.getElementById('receipt-modal').classList.remove('hidden');
+
+    // Clear cart
+    cart = []; selectedCustomer = null;
+    document.getElementById('customer-selected').classList.add('hidden');
+    document.getElementById('customer-selected').classList.remove('flex');
+    document.getElementById('customer-search-wrap').classList.remove('hidden');
+    document.getElementById('customer-search').value = '';
+    document.getElementById('discount-input').value  = '0';
+    document.getElementById('vat-toggle').checked    = false;
+    renderCart();
+}
+
+document.getElementById('btn-new-sale').addEventListener('click', () =>
+    document.getElementById('receipt-modal').classList.add('hidden'));
+
+// ── Sync queue ────────────────────────────────────────────────────────────────
+async function syncQueue() {
+    const queued = await dbGetAll('queue');
+    if (queued.length === 0) return;
+
+    try {
+        const res = await fetch('/pos-offline/sync', {
+            method:  'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'X-CSRF-TOKEN': await getCsrfToken(),
+            },
+            credentials: 'same-origin',
+            body: JSON.stringify({ sales: queued }),
+        });
+
+        if (!res.ok) throw new Error('Sync failed');
+
+        const data = await res.json();
+
+        // Remove successfully synced sales from queue
+        for (const saved of data.saved) {
+            await dbDelete('queue', saved.offline_id);
+            showToast(`✅ Synced: ${saved.sale_number} (${saved.invoice_number})`, 'success');
+        }
+
+        if (data.errors.length > 0) {
+            showToast(`⚠️ ${data.errors.length} sale(s) failed to sync`, 'error');
+        }
+
+        updateQueueBadge();
+    } catch (e) {
+        // Still offline or error — will retry when online again
+    }
+}
+
+async function getCsrfToken() {
+    try {
+        const res  = await fetch('/pos-offline/csrf', { credentials: 'same-origin' });
+        const data = await res.json();
+        return data.token;
+    } catch (e) {
+        return document.querySelector('meta[name="csrf-token"]')?.content ?? '';
+    }
+}
+
+async function updateQueueBadge() {
+    const queued = await dbGetAll('queue');
+    const bar    = document.getElementById('queue-bar');
+    if (queued.length > 0) {
+        document.getElementById('queue-count').textContent = queued.length;
+        bar.classList.remove('hidden');
+    } else {
+        bar.classList.add('hidden');
+    }
+}
+
+// ── Online/Offline detection ──────────────────────────────────────────────────
+function updateOnlineStatus() {
+    const banner = document.getElementById('offline-banner');
+    const text   = document.getElementById('banner-text');
+    if (navigator.onLine) {
+        banner.className = 'flex items-center gap-2 bg-green-900 border border-green-700 text-green-200 px-3 py-1.5 rounded-lg';
+        text.textContent = 'BACK ONLINE — Syncing...';
+        syncFromServer();
+        syncQueue().then(() => {
+            setTimeout(() => {
+                // Redirect back to main POS after sync
+                window.location.href = '/pos';
+            }, 2000);
+        });
+    } else {
+        banner.className = 'flex items-center gap-2 bg-red-900 border border-red-700 text-red-200 px-3 py-1.5 rounded-lg';
+        text.textContent = 'OFFLINE MODE';
+    }
+}
+
+window.addEventListener('online',  updateOnlineStatus);
+window.addEventListener('offline', updateOnlineStatus);
+
+// ── Toast notifications ───────────────────────────────────────────────────────
+function showToast(message, type = 'info') {
+    const id  = type === 'error' ? 'error-toast' : 'sync-toast';
+    const el  = document.getElementById(id);
+    el.textContent = message;
+    el.classList.remove('hidden');
+    setTimeout(() => el.classList.add('hidden'), 4000);
+}
+
+// ── Utils ─────────────────────────────────────────────────────────────────────
+function round2(n) { return Math.round(n * 100) / 100; }
+
+// ── Event listeners ───────────────────────────────────────────────────────────
+document.getElementById('product-search').addEventListener('input', function () {
+    searchQuery = this.value; renderProducts();
+});
+document.getElementById('discount-input').addEventListener('input', updateTotals);
+document.getElementById('vat-toggle').addEventListener('change', updateTotals);
+document.getElementById('btn-clear').addEventListener('click', () => {
+    cart = []; selectedCustomer = null;
+    document.getElementById('customer-selected').classList.add('hidden');
+    document.getElementById('customer-selected').classList.remove('flex');
+    document.getElementById('customer-search-wrap').classList.remove('hidden');
+    document.getElementById('customer-search').value = '';
+    document.getElementById('discount-input').value  = '0';
+    document.getElementById('vat-toggle').checked    = false;
+    renderCart();
+});
+document.getElementById('btn-charge').addEventListener('click', openPaymentModal);
+
+// ── Boot ──────────────────────────────────────────────────────────────────────
+async function boot() {
+    db = await openDB();
+    await loadUser();
+    await syncFromServer();
+    renderCategories();
+    renderProducts();
+    updateQueueBadge();
+    updateOnlineStatus();
+}
+
+boot();
+</script>
+</body>
+</html>

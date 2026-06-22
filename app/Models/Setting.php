@@ -2,10 +2,13 @@
 
 namespace App\Models;
 
+use App\Traits\LogsUserActivity;
+
 use Illuminate\Database\Eloquent\Model;
 
 class Setting extends Model
 {
+    use LogsUserActivity;
     protected $fillable = ['key', 'value', 'group'];
 
     public static function get(string $key, mixed $default = null): mixed

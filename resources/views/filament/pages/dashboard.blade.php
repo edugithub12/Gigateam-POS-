@@ -4,8 +4,8 @@
 .gt-grid-4 { display: grid; grid-template-columns: repeat(4, 1fr); gap: 1rem; margin-bottom: 1.5rem; }
 .gt-grid-3 { display: grid; grid-template-columns: repeat(3, 1fr); gap: 1rem; margin-bottom: 1.5rem; }
 .gt-grid-2-1 { display: grid; grid-template-columns: 2fr 1fr; gap: 1.5rem; margin-bottom: 1.5rem; }
+.gt-grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 1.5rem; margin-bottom: 1.5rem; }
 .gt-card { background: #fff; border-radius: 1rem; border: 1px solid #f0f0f0; padding: 1.25rem; }
-.gt-card-dark { background: var(--fi-bg); border-radius: 1rem; border: 1px solid var(--fi-gray-200); padding: 1.25rem; }
 .gt-kpi-label { font-size: 0.7rem; font-weight: 600; text-transform: uppercase; letter-spacing: 0.05em; color: #6b7280; margin-bottom: 0.25rem; }
 .gt-kpi-value { font-size: 1.6rem; font-weight: 700; color: #111827; line-height: 1.2; }
 .gt-kpi-sub { font-size: 0.75rem; color: #9ca3af; margin-top: 0.25rem; }
@@ -23,11 +23,7 @@
 .gt-alert-orange { background: #fff7ed; border: 1px solid #fed7aa; }
 .gt-alert-icon { width: 2.5rem; height: 2.5rem; border-radius: 0.75rem; display: flex; align-items: center; justify-content: center; flex-shrink: 0; }
 .gt-alert-btn { font-size: 0.7rem; padding: 0.35rem 0.75rem; border-radius: 0.5rem; color: #fff; font-weight: 600; text-decoration: none; flex-shrink: 0; }
-.gt-section-title { font-size: 0.85rem; font-weight: 600; color: #374151; margin-bottom: 1rem; }
-.gt-bar-wrap { display: flex; align-items: flex-end; gap: 3px; height: 8rem; }
-.gt-bar-col { flex: 1; display: flex; flex-direction: column; align-items: center; gap: 2px; }
-.gt-bar { width: 100%; background: #3b82f6; border-radius: 3px 3px 0 0; min-height: 4px; }
-.gt-bar-label { font-size: 7px; color: #9ca3af; white-space: nowrap; transform: rotate(45deg); transform-origin: left; }
+.gt-section-title { font-size: 0.85rem; font-weight: 700; color: #374151; margin-bottom: 1rem; }
 .gt-action-btn { display: flex; align-items: center; gap: 0.75rem; padding: 0.75rem; border-radius: 0.75rem; text-decoration: none; margin-bottom: 0.5rem; transition: opacity 0.15s; }
 .gt-action-btn:hover { opacity: 0.85; }
 .gt-action-icon { width: 2rem; height: 2rem; border-radius: 0.5rem; display: flex; align-items: center; justify-content: center; flex-shrink: 0; }
@@ -43,15 +39,15 @@
 .gt-stat-label { font-size: 0.7rem; color: #6b7280; margin-top: 0.2rem; }
 .gt-stat-sub { font-size: 0.65rem; margin-top: 0.15rem; }
 .clearfix::after { content: ''; display: table; clear: both; }
+.chart-container { position: relative; }
 @media (max-width: 900px) {
     .gt-grid-4, .gt-grid-3 { grid-template-columns: repeat(2, 1fr); }
-    .gt-grid-2-1 { grid-template-columns: 1fr; }
+    .gt-grid-2-1, .gt-grid-2 { grid-template-columns: 1fr; }
 }
 </style>
 
 {{-- ── KPI Cards ── --}}
 <div class="gt-grid-4">
-
     <div class="gt-card clearfix">
         <div class="gt-icon-wrap gt-green">💰</div>
         <div class="gt-kpi-label">Today's Sales</div>
@@ -59,7 +55,6 @@
         <div class="gt-kpi-sub">{{ $todayCount }} transaction(s)</div>
         <a href="/pos" class="gt-kpi-link" style="color:#059669;">Open POS →</a>
     </div>
-
     <div class="gt-card clearfix">
         <div class="gt-icon-wrap gt-blue">📊</div>
         <div class="gt-kpi-label">This Month</div>
@@ -67,9 +62,8 @@
         <div class="gt-kpi-sub" style="color: {{ $revenueGrowth >= 0 ? '#059669' : '#dc2626' }}">
             {{ $revenueGrowth >= 0 ? '▲' : '▼' }} {{ abs($revenueGrowth) }}% vs last month
         </div>
-        <a href="/admin/invoices" class="gt-kpi-link" style="color:#2563eb;">View Invoices →</a>
+        <a href="/admin/sales" class="gt-kpi-link" style="color:#2563eb;">View Sales →</a>
     </div>
-
     <div class="gt-card clearfix">
         <div class="gt-icon-wrap gt-orange">⚠️</div>
         <div class="gt-kpi-label">Outstanding</div>
@@ -79,7 +73,6 @@
         </div>
         <a href="/admin/invoices" class="gt-kpi-link" style="color:#ea580c;">Manage →</a>
     </div>
-
     <div class="gt-card clearfix">
         <div class="gt-icon-wrap gt-purple">🔧</div>
         <div class="gt-kpi-label">Active Jobs</div>
@@ -87,7 +80,6 @@
         <div class="gt-kpi-sub">{{ $completedToday }} completed today</div>
         <a href="/admin/job-cards" class="gt-kpi-link" style="color:#7c3aed;">View Jobs →</a>
     </div>
-
 </div>
 
 {{-- ── Alerts ── --}}
@@ -126,25 +118,16 @@
 </div>
 @endif
 
-{{-- ── Revenue Chart + Quick Actions ── --}}
-<div class="gt-grid-2-1">
-
+{{-- ── Revenue Trend (30 days) + Quick Actions ── --}}
+<div class="gt-grid-2-1" style="margin-bottom:1.5rem;">
     <div class="gt-card">
-        <div class="gt-section-title">Revenue — Last 14 Days</div>
-        @php $maxRev = max(array_column($chartData, 'revenue')) ?: 1; @endphp
-        <div class="gt-bar-wrap">
-            @foreach($chartData as $day)
-            @php $h = max(4, round(($day['revenue'] / $maxRev) * 100)); @endphp
-            <div class="gt-bar-col">
-                <div class="gt-bar" style="height:{{ $h }}px;" title="KES {{ number_format($day['revenue'],0) }} on {{ $day['date'] }}"></div>
-                <span class="gt-bar-label">{{ $day['date'] }}</span>
-            </div>
-            @endforeach
+        <div class="gt-section-title">📈 Revenue Trend — Last 30 Days</div>
+        <div class="chart-container" style="height:220px;">
+            <canvas id="revenueChart"></canvas>
         </div>
     </div>
-
     <div class="gt-card">
-        <div class="gt-section-title">Quick Actions</div>
+        <div class="gt-section-title">⚡ Quick Actions</div>
         <a href="/pos" class="gt-action-btn" style="background:#fff1f2;">
             <div class="gt-action-icon" style="background:#dc2626;">🛒</div>
             <span class="gt-action-text">Open POS</span>
@@ -168,9 +151,46 @@
     </div>
 </div>
 
-{{-- ── Recent Sales + Top Products + Low Stock ── --}}
-<div class="gt-grid-2-1">
+{{-- ── Monthly Revenue (6 months) + Payment Methods ── --}}
+<div class="gt-grid-2" style="margin-bottom:1.5rem;">
+    <div class="gt-card">
+        <div class="gt-section-title">📅 Monthly Revenue — Last 6 Months</div>
+        <div class="chart-container" style="height:220px;">
+            <canvas id="monthlyChart"></canvas>
+        </div>
+    </div>
+    <div class="gt-card">
+        <div class="gt-section-title">💳 Payment Methods This Month</div>
+        <div class="chart-container" style="height:220px;">
+            <canvas id="paymentChart"></canvas>
+        </div>
+    </div>
+</div>
 
+{{-- ── Top Products + Job Card Status ── --}}
+<div class="gt-grid-2" style="margin-bottom:1.5rem;">
+    <div class="gt-card">
+        <div class="gt-section-title">🏆 Top Products This Month</div>
+        <div class="chart-container" style="height:220px;">
+            <canvas id="topProductsChart"></canvas>
+        </div>
+    </div>
+    <div class="gt-card">
+        <div class="gt-section-title">🔧 Job Card Status Breakdown</div>
+        <div class="chart-container" style="height:220px;">
+            <canvas id="jobStatusChart"></canvas>
+        </div>
+    </div>
+</div>
+
+{{-- ── Hourly Sales Today + Recent Sales ── --}}
+<div class="gt-grid-2-1" style="margin-bottom:1.5rem;">
+    <div class="gt-card">
+        <div class="gt-section-title">🕐 Hourly Sales Today</div>
+        <div class="chart-container" style="height:180px;">
+            <canvas id="hourlyChart"></canvas>
+        </div>
+    </div>
     <div class="gt-card">
         <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:1rem;">
             <div class="gt-section-title" style="margin-bottom:0;">Recent Sales</div>
@@ -193,42 +213,6 @@
             </div>
         </div>
         @endforeach
-        @endif
-    </div>
-
-    <div>
-        <div class="gt-card" style="margin-bottom:1rem;">
-            <div class="gt-section-title">Top Products This Month</div>
-            @if($topProducts->isEmpty())
-            <p style="font-size:0.75rem;color:#9ca3af;text-align:center;padding:0.75rem 0;">No sales this month</p>
-            @else
-            @foreach($topProducts as $p)
-            <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:0.5rem;">
-                <div style="font-size:0.78rem;color:#374151;flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;margin-right:0.5rem;">{{ $p->name }}</div>
-                <div style="text-align:right;flex-shrink:0;">
-                    <div style="font-size:0.78rem;font-weight:700;">KES {{ number_format($p->revenue, 0) }}</div>
-                    <div style="font-size:0.65rem;color:#9ca3af;">{{ $p->qty }} sold</div>
-                </div>
-            </div>
-            @endforeach
-            @endif
-        </div>
-
-        @if($lowStockItems->count() > 0)
-        <div class="gt-card">
-            <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:0.75rem;">
-                <div class="gt-section-title" style="margin-bottom:0;">Low Stock</div>
-                <a href="/admin/products" style="font-size:0.7rem;color:#ea580c;">View all →</a>
-            </div>
-            @foreach($lowStockItems->take(5) as $item)
-            <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:0.4rem;">
-                <div style="font-size:0.78rem;color:#374151;flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;margin-right:0.5rem;">{{ $item->name }}</div>
-                <span class="gt-badge {{ $item->stock_quantity <= 0 ? 'gt-badge-red' : 'gt-badge-yellow' }}">
-                    {{ $item->stock_quantity }} left
-                </span>
-            </div>
-            @endforeach
-        </div>
         @endif
     </div>
 </div>
@@ -261,5 +245,171 @@
         @endif
     </div>
 </div>
+
+{{-- ── Chart.js ── --}}
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+<script>
+document.addEventListener('DOMContentLoaded', function () {
+
+    const fmt = v => 'KES ' + Number(v).toLocaleString('en-KE', {maximumFractionDigits: 0});
+
+    // ── 1. Revenue Trend (30 days) ──────────────────────────────────────────
+    new Chart(document.getElementById('revenueChart'), {
+        type: 'line',
+        data: {
+            labels: @json($chartLabels),
+            datasets: [{
+                label: 'Revenue (KES)',
+                data: @json($chartValues),
+                borderColor: '#3b82f6',
+                backgroundColor: 'rgba(59,130,246,0.08)',
+                borderWidth: 2,
+                pointRadius: 3,
+                pointBackgroundColor: '#3b82f6',
+                fill: true,
+                tension: 0.4,
+            }]
+        },
+        options: {
+            responsive: true, maintainAspectRatio: false,
+            plugins: { legend: { display: false }, tooltip: { callbacks: { label: ctx => fmt(ctx.parsed.y) } } },
+            scales: {
+                x: { ticks: { font: { size: 10 }, maxRotation: 45, autoSkip: true, maxTicksLimit: 10 }, grid: { display: false } },
+                y: { ticks: { font: { size: 10 }, callback: v => 'KES ' + (v >= 1000 ? (v/1000).toFixed(0)+'k' : v) }, grid: { color: '#f3f4f6' } }
+            }
+        }
+    });
+
+    // ── 2. Monthly Revenue (6 months) ───────────────────────────────────────
+    new Chart(document.getElementById('monthlyChart'), {
+        type: 'bar',
+        data: {
+            labels: @json($monthlyLabels),
+            datasets: [{
+                label: 'Revenue (KES)',
+                data: @json($monthlyValues),
+                backgroundColor: ['#bfdbfe','#bfdbfe','#bfdbfe','#bfdbfe','#bfdbfe','#3b82f6'],
+                borderRadius: 6,
+            }]
+        },
+        options: {
+            responsive: true, maintainAspectRatio: false,
+            plugins: { legend: { display: false }, tooltip: { callbacks: { label: ctx => fmt(ctx.parsed.y) } } },
+            scales: {
+                x: { ticks: { font: { size: 10 } }, grid: { display: false } },
+                y: { ticks: { font: { size: 10 }, callback: v => 'KES ' + (v >= 1000 ? (v/1000).toFixed(0)+'k' : v) }, grid: { color: '#f3f4f6' } }
+            }
+        }
+    });
+
+    // ── 3. Payment Methods (doughnut) ────────────────────────────────────────
+    const paymentLabels = @json($paymentLabels);
+    const paymentValues = @json($paymentValues);
+    if (paymentValues.length > 0) {
+        new Chart(document.getElementById('paymentChart'), {
+            type: 'doughnut',
+            data: {
+                labels: paymentLabels,
+                datasets: [{
+                    data: paymentValues,
+                    backgroundColor: ['#3b82f6','#10b981','#f59e0b','#ef4444','#8b5cf6','#06b6d4'],
+                    borderWidth: 2,
+                    borderColor: '#fff',
+                }]
+            },
+            options: {
+                responsive: true, maintainAspectRatio: false,
+                plugins: {
+                    legend: { position: 'bottom', labels: { font: { size: 11 }, padding: 12 } },
+                    tooltip: { callbacks: { label: ctx => ctx.label + ': ' + fmt(ctx.parsed) } }
+                },
+                cutout: '60%',
+            }
+        });
+    } else {
+        document.getElementById('paymentChart').parentElement.innerHTML = '<p style="text-align:center;color:#9ca3af;font-size:0.8rem;padding-top:4rem;">No payments this month</p>';
+    }
+
+    // ── 4. Top Products (horizontal bar) ─────────────────────────────────────
+    const topLabels = @json($topProductLabels);
+    const topValues = @json($topProductValues);
+    if (topValues.length > 0) {
+        new Chart(document.getElementById('topProductsChart'), {
+            type: 'bar',
+            data: {
+                labels: topLabels,
+                datasets: [{
+                    label: 'Revenue (KES)',
+                    data: topValues,
+                    backgroundColor: '#10b981',
+                    borderRadius: 5,
+                }]
+            },
+            options: {
+                indexAxis: 'y',
+                responsive: true, maintainAspectRatio: false,
+                plugins: { legend: { display: false }, tooltip: { callbacks: { label: ctx => fmt(ctx.parsed.x) } } },
+                scales: {
+                    x: { ticks: { font: { size: 10 }, callback: v => 'KES ' + (v >= 1000 ? (v/1000).toFixed(0)+'k' : v) }, grid: { color: '#f3f4f6' } },
+                    y: { ticks: { font: { size: 10 } }, grid: { display: false } }
+                }
+            }
+        });
+    } else {
+        document.getElementById('topProductsChart').parentElement.innerHTML = '<p style="text-align:center;color:#9ca3af;font-size:0.8rem;padding-top:4rem;">No sales this month</p>';
+    }
+
+    // ── 5. Job Card Status (doughnut) ────────────────────────────────────────
+    const jobLabels = @json($jobStatusLabels);
+    const jobValues = @json($jobStatusValues);
+    if (jobValues.length > 0) {
+        new Chart(document.getElementById('jobStatusChart'), {
+            type: 'doughnut',
+            data: {
+                labels: jobLabels,
+                datasets: [{
+                    data: jobValues,
+                    backgroundColor: ['#6b7280','#3b82f6','#f59e0b','#10b981','#059669','#ef4444'],
+                    borderWidth: 2,
+                    borderColor: '#fff',
+                }]
+            },
+            options: {
+                responsive: true, maintainAspectRatio: false,
+                plugins: {
+                    legend: { position: 'bottom', labels: { font: { size: 11 }, padding: 10 } },
+                    tooltip: { callbacks: { label: ctx => ctx.label + ': ' + ctx.parsed + ' jobs' } }
+                },
+                cutout: '55%',
+            }
+        });
+    } else {
+        document.getElementById('jobStatusChart').parentElement.innerHTML = '<p style="text-align:center;color:#9ca3af;font-size:0.8rem;padding-top:4rem;">No job cards yet</p>';
+    }
+
+    // ── 6. Hourly Sales Today ────────────────────────────────────────────────
+    new Chart(document.getElementById('hourlyChart'), {
+        type: 'bar',
+        data: {
+            labels: @json($hourlyLabels),
+            datasets: [{
+                label: 'Revenue (KES)',
+                data: @json($hourlyValues),
+                backgroundColor: 'rgba(139,92,246,0.7)',
+                borderRadius: 4,
+            }]
+        },
+        options: {
+            responsive: true, maintainAspectRatio: false,
+            plugins: { legend: { display: false }, tooltip: { callbacks: { label: ctx => fmt(ctx.parsed.y) } } },
+            scales: {
+                x: { ticks: { font: { size: 10 } }, grid: { display: false } },
+                y: { ticks: { font: { size: 10 }, callback: v => v >= 1000 ? (v/1000).toFixed(0)+'k' : v }, grid: { color: '#f3f4f6' } }
+            }
+        }
+    });
+
+});
+</script>
 
 </x-filament-panels::page>

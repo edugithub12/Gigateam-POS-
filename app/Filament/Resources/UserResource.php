@@ -3,12 +3,16 @@
 namespace App\Filament\Resources;
 
 use App\Filament\Resources\UserResource\Pages;
+use App\Models\Location;
+use App\Models\Technician;
 use App\Models\User;
 use Filament\Forms;
 use Filament\Forms\Form;
+use Filament\Forms\Get;
 use Filament\Resources\Resource;
 use Filament\Tables;
 use Filament\Tables\Table;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Hash;
 use Spatie\Permission\Models\Role;
 
@@ -62,19 +66,81 @@ class UserResource extends Resource
             Forms\Components\Section::make('Role & Access')
                 ->schema([
                     Forms\Components\Select::make('roles')
-                        ->label('Role')
+                        ->label('Global Role')
                         ->options(Role::all()->pluck('name', 'name')->map(fn ($name) => ucfirst($name)))
                         ->required()
                         ->native(false)
                         ->relationship('roles', 'name')
                         ->preload()
-                        ->helperText('Admin: full access | Accountant: finance | Salesperson: sales & quotes | Technician: job cards only'),
+                        ->live()
+                        ->helperText('Super Admin / Admin: full access | Manager: approves transfers | Accountant: finance | Salesperson: sales & quotes | Technician: job cards only'),
 
                     Forms\Components\Toggle::make('is_active')
                         ->label('Account Active')
                         ->default(true)
                         ->helperText('Inactive accounts cannot log in.'),
                 ])->columns(2),
+
+            // ── Shop assignments via pivot ─────────────────────────────────────
+            Forms\Components\Section::make('Shop Assignments')
+                ->description('Assign this staff member to one or more shops. Set their role per shop and mark one as primary.')
+                ->schema([
+                    Forms\Components\Repeater::make('locationAssignments')
+                        ->label('Assigned Shops')
+                        ->schema([
+                            Forms\Components\Select::make('location_id')
+                                ->label('Shop')
+                                ->options(Location::active()->orderBy('name')->pluck('name', 'id'))
+                                ->required()
+                                ->native(false)
+                                ->distinct(),
+
+                            Forms\Components\Select::make('shop_role')
+                                ->label('Role at this shop')
+                                ->options([
+                                    'shop_manager' => 'Shop Manager',
+                                    'cashier'      => 'Cashier',
+                                    'stock_clerk'  => 'Stock Clerk',
+                                ])
+                                ->required()
+                                ->native(false)
+                                ->default('cashier'),
+
+                            Forms\Components\Toggle::make('is_primary')
+                                ->label('Primary shop')
+                                ->default(false)
+                                ->helperText('The shop this user lands on at login.'),
+                        ])
+                        ->columns(3)
+                        ->defaultItems(0)
+                        ->addActionLabel('Add shop')
+                        ->dehydrated(false) // We handle saving manually in afterSave
+                        ->visible(fn (Get $get) => $get('roles') !== 'super_admin'),
+                ]),
+
+            // Technician fields — only visible when Technician role is selected
+            Forms\Components\Section::make('Technician Details')
+                ->schema([
+                    Forms\Components\Select::make('specialization')
+                        ->options(Technician::$specializations)
+                        ->default('General'),
+
+                    Forms\Components\Select::make('technician_status')
+                        ->label('Availability')
+                        ->options(Technician::$statuses)
+                        ->default('active'),
+
+                    Forms\Components\TextInput::make('id_number')
+                        ->label('National ID')
+                        ->maxLength(20),
+
+                    Forms\Components\Textarea::make('technician_notes')
+                        ->label('Notes')
+                        ->rows(2)
+                        ->columnSpanFull(),
+                ])
+                ->columns(2)
+                ->visible(fn (Get $get): bool => $get('roles') === 'technician'),
         ]);
     }
 
@@ -100,31 +166,60 @@ class UserResource extends Resource
                     ->label('Role')
                     ->badge()
                     ->color(fn (string $state): string => match ($state) {
+                        'super_admin' => 'danger',
                         'admin'       => 'danger',
+                        'manager'     => 'info',
                         'accountant'  => 'warning',
                         'salesperson' => 'success',
-                        'technician'  => 'info',
+                        'technician'  => 'primary',
                         default       => 'gray',
                     })
-                    ->formatStateUsing(fn ($state) => ucfirst($state)),
+                    ->formatStateUsing(fn ($state) => ucfirst(str_replace('_', ' ', $state))),
+
+                // ── Fixed: pull primary location from pivot, not belongsTo ──
+                Tables\Columns\TextColumn::make('primary_location')
+                    ->label('Primary Shop')
+                    ->badge()
+                    ->color('success')
+                    ->placeholder('— All Locations —')
+                    ->getStateUsing(fn (User $record) =>
+                        $record->activeLocations()
+                               ->wherePivot('is_primary', true)
+                               ->first()?->name
+                        ?? $record->activeLocations()->first()?->name
+                        ?? null
+                    ),
+
+                Tables\Columns\TextColumn::make('specialization')
+                    ->badge()
+                    ->color('gray')
+                    ->placeholder('—')
+                    ->toggleable(),
 
                 Tables\Columns\IconColumn::make('is_active')
                     ->label('Active')
                     ->boolean(),
-
-                Tables\Columns\TextColumn::make('created_at')
-                    ->label('Created')
-                    ->date('d M Y')
-                    ->sortable()
-                    ->toggleable(isToggledHiddenByDefault: true),
             ])
             ->filters([
                 Tables\Filters\SelectFilter::make('roles')
                     ->relationship('roles', 'name')
                     ->label('Filter by Role'),
+
+                // ── Fixed: filter by location via pivot, not relationship() ──
+                Tables\Filters\SelectFilter::make('location')
+                    ->label('Filter by Shop')
+                    ->options(Location::active()->orderBy('name')->pluck('name', 'id'))
+                    ->query(function ($query, array $data) {
+                        if (filled($data['value'])) {
+                            $query->whereHas('activeLocations', fn ($q) =>
+                                $q->where('locations.id', $data['value'])
+                            );
+                        }
+                    }),
             ])
             ->actions([
                 Tables\Actions\EditAction::make(),
+
                 Tables\Actions\Action::make('resetPassword')
                     ->label('Reset Password')
                     ->icon('heroicon-o-key')
@@ -147,12 +242,14 @@ class UserResource extends Resource
                             ->success()
                             ->send();
                     }),
+
                 Tables\Actions\Action::make('toggleActive')
                     ->label(fn (User $record) => $record->is_active ? 'Deactivate' : 'Activate')
                     ->icon(fn (User $record) => $record->is_active ? 'heroicon-o-lock-closed' : 'heroicon-o-lock-open')
                     ->color(fn (User $record) => $record->is_active ? 'danger' : 'success')
                     ->requiresConfirmation()
                     ->action(fn (User $record) => $record->update(['is_active' => !$record->is_active])),
+
                 Tables\Actions\DeleteAction::make(),
             ])
             ->bulkActions([
@@ -179,6 +276,6 @@ class UserResource extends Resource
 
     public static function canAccess(): bool
     {
-        return auth()->user()?->hasRole('admin') ?? false;
+        return auth()->user()?->hasAnyRole(['super_admin', 'admin']) ?? false;
     }
 }

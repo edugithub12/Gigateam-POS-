@@ -2,11 +2,14 @@
 
 namespace App\Models;
 
+use App\Traits\LogsUserActivity;
+
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 
 class Payment extends Model
 {
+    use LogsUserActivity;
     protected $fillable = [
         'sale_id', 'amount', 'method', 'reference', 'status', 'notes', 'user_id',
     ];
@@ -23,6 +26,11 @@ class Payment extends Model
         'cheque'        => 'Cheque',
         'credit'        => 'Credit',
     ];
+
+    protected static function getActivityLogName(): string
+    {
+        return 'payments';
+    }
 
     public function sale(): BelongsTo
     {

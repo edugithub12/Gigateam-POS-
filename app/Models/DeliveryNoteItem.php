@@ -2,11 +2,14 @@
 
 namespace App\Models;
 
+use App\Traits\LogsUserActivity;
+
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 
 class DeliveryNoteItem extends Model
 {
+    use LogsUserActivity;
     protected $fillable = [
         'delivery_note_id', 'product_id', 'sort_order',
         'description', 'unit', 'quantity', 'notes',

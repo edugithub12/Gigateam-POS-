@@ -2,12 +2,15 @@
 
 namespace App\Models;
 
+use App\Traits\LogsUserActivity;
+
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\SoftDeletes;
 use Illuminate\Database\Eloquent\Relations\HasMany;
 
 class Customer extends Model
 {
+    use LogsUserActivity;
     use SoftDeletes;
 
     protected $fillable = [
@@ -31,6 +34,11 @@ class Customer extends Model
         'estate'     => 'Estate / Compound',
         'ngo'        => 'NGO / Church',
     ];
+
+    protected static function getActivityLogName(): string
+    {
+        return 'customers';
+    }
 
     // ── Relationships ────────────────────────────────────────────────────────
 

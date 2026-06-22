@@ -2,12 +2,11 @@
 
 namespace App\Livewire\Pos;
 
-use App\Models\Customer;
 use App\Models\Invoice;
 use App\Models\InvoiceItem;
 use App\Models\Payment;
+use App\Models\PaymentMethod;
 use App\Models\Product;
-use App\Models\ProductCategory;
 use App\Models\Sale;
 use App\Models\SaleItem;
 use App\Models\StockMovement;
@@ -18,27 +17,23 @@ use Livewire\Component;
 class PosCart extends Component
 {
     public string $search = '';
-    public ?int $categoryId = null;
     public array $cart = [];
-    public string $customerSearch = '';
-    public ?int $customerId = null;
-    public ?string $customerName = null;
-    public ?string $customerPhone = null;
+    public ?int $selectedIndex = null;
+
     public float $globalDiscount = 0;
     public bool $applyVat = false;
     public string $notes = '';
-    public bool $showPaymentModal = false;
+
+    public bool $showPaymentPanel = false;
+    public ?string $activeMethod = null;
+    public ?string $amountTendered = null;
+    public ?string $paymentReference = null;
+
     public bool $showReceipt = false;
     public ?array $completedSale = null;
     public ?int $currentSaleId = null;
 
-    public array $payments = [
-        ['method' => 'cash',          'amount' => '', 'reference' => ''],
-        ['method' => 'mpesa',         'amount' => '', 'reference' => ''],
-        ['method' => 'bank_transfer', 'amount' => '', 'reference' => ''],
-        ['method' => 'cheque',        'amount' => '', 'reference' => ''],
-        ['method' => 'credit',        'amount' => '', 'reference' => ''],
-    ];
+    // ── Sale reference preview ────────────────────────────────────────────────
 
     public function nextSaleRef(): string
     {
@@ -47,23 +42,91 @@ class PosCart extends Component
         return 'SAL-' . now()->format('Ym') . '-' . str_pad(($last + 1), 4, '0', STR_PAD_LEFT);
     }
 
+    // ── Location helpers ──────────────────────────────────────────────────────
+
+    private function locationId(): ?int
+    {
+        return Auth::user()->location_id;
+    }
+
+    /**
+     * Stock is tracked directly on each shop's own Product row (Product is
+     * shop-scoped via BelongsToShop's global scope), so a product fetched
+     * through the normal scoped queries already belongs to the active
+     * location — its `quantity` column IS the stock available here.
+     */
+    private function stockAvailable(Product $product): int
+    {
+        if ($product->is_service) return PHP_INT_MAX;
+
+        return $product->quantity;
+    }
+
+    // ── Cart row selection ────────────────────────────────────────────────────
+
+    public function selectRow(int $index): void
+    {
+        $this->selectedIndex = $index;
+    }
+
+    // ── Barcode / search ──────────────────────────────────────────────────────
+
+    /**
+     * Handles Enter on the search/barcode field:
+     * exact SKU/barcode match → add directly.
+     * Otherwise, if only one search result matches, add it.
+     */
+    public function addBySearchOrBarcode(): void
+    {
+        $term = trim($this->search);
+        if ($term === '') return;
+
+        // Try exact SKU or barcode match first (scanner case)
+        $product = Product::active()
+            ->where(function ($q) use ($term) {
+                $q->where('sku', $term)->orWhere('barcode', $term);
+            })
+            ->first();
+
+        if ($product) {
+            $this->addToCart($product->id);
+            $this->search = '';
+            return;
+        }
+
+        // Fallback: if search text matches exactly one product, add it
+        $matches = Product::active()->search($term)->limit(2)->get();
+        if ($matches->count() === 1) {
+            $this->addToCart($matches->first()->id);
+            $this->search = '';
+        }
+        // else: leave search results for user to pick from the dropdown
+    }
+
+    // ── Cart operations ───────────────────────────────────────────────────────
+
     public function addToCart(int $productId): void
     {
         $product = Product::find($productId);
         if (!$product) return;
-        if (!$product->is_service && $product->stock_quantity <= 0) {
+
+        $available = $this->stockAvailable($product);
+
+        if (!$product->is_service && $available <= 0) {
             $this->dispatch('notify', type: 'error', message: "Out of stock: {$product->name}");
             return;
         }
+
         $key = $this->cartKey($productId);
         if ($key !== null) {
             $newQty = $this->cart[$key]['quantity'] + 1;
-            if (!$product->is_service && $newQty > $product->stock_quantity) {
-                $this->dispatch('notify', type: 'warning', message: "Only {$product->stock_quantity} in stock");
+            if (!$product->is_service && $newQty > $available) {
+                $this->dispatch('notify', type: 'warning', message: "Only {$available} in stock at your location");
                 return;
             }
             $this->cart[$key]['quantity'] = $newQty;
             $this->recalcLine($key);
+            $this->selectedIndex = $key;
         } else {
             $this->cart[] = [
                 'product_id'      => $product->id,
@@ -75,23 +138,32 @@ class PosCart extends Component
                 'quantity'        => 1,
                 'discount'        => 0,
                 'total'           => (float) $product->selling_price,
-                'stock_available' => $product->stock_quantity,
+                'stock_available' => $available,
                 'is_service'      => $product->is_service,
             ];
+            $this->selectedIndex = array_key_last($this->cart);
         }
         $this->search = '';
     }
 
     public function removeFromCart(int $index): void
     {
+        if ($index < 0 || !array_key_exists($index, $this->cart)) {
+            return;
+        }
+
         unset($this->cart[$index]);
         $this->cart = array_values($this->cart);
+        $this->selectedIndex = null;
     }
 
     public function updateQty(int $index, $qty): void
     {
         $qty = (int) $qty;
-        if ($qty <= 0) { $this->removeFromCart($index); return; }
+        if ($qty <= 0) {
+            $this->removeFromCart($index);
+            return;
+        }
         $item = $this->cart[$index];
         if (!$item['is_service'] && $qty > $item['stock_available']) {
             $qty = $item['stock_available'];
@@ -108,83 +180,108 @@ class PosCart extends Component
 
     public function clearCart(): void
     {
-        $this->cart = [];
-        $this->customerId = null;
-        $this->customerName = null;
-        $this->customerPhone = null;
-        $this->customerSearch = '';
+        $this->cart           = [];
+        $this->selectedIndex  = null;
         $this->globalDiscount = 0;
-        $this->applyVat = false;
-        $this->notes = '';
-        $this->currentSaleId = null;
-        $this->resetPayments();
+        $this->applyVat       = false;
+        $this->notes          = '';
+        $this->currentSaleId  = null;
+        $this->showPaymentPanel = false;
+        $this->activeMethod     = null;
+        $this->amountTendered   = null;
+        $this->paymentReference = null;
     }
 
-    public function selectCustomer(int $id): void
-    {
-        $c = Customer::find($id);
-        if ($c) {
-            $this->customerId    = $c->id;
-            $this->customerName  = $c->company_name ?? $c->name;
-            $this->customerPhone = $c->phone;
-            $this->customerSearch = $this->customerName;
-        }
-    }
+    // ── Payment ───────────────────────────────────────────────────────────────
 
-    public function clearCustomer(): void
+    /**
+     * Select (or toggle off) a payment method tile.
+     * Pre-fills the amount with the exact total.
+     */
+    public function selectPaymentMethod(string $code): void
     {
-        $this->customerId = null;
-        $this->customerName = null;
-        $this->customerPhone = null;
-        $this->customerSearch = '';
-    }
-
-    public function openPaymentModal(): void
-    {
-        if (empty($this->cart)) {
-            $this->dispatch('notify', type: 'error', message: 'Cart is empty');
+        if ($this->activeMethod === $code) {
+            $this->cancelPayment();
             return;
         }
-        $this->resetPayments();
-        $this->payments[0]['amount'] = number_format($this->calcGrandTotal(), 2, '.', '');
-        $this->showPaymentModal = true;
+
+        $this->activeMethod     = $code;
+        $this->showPaymentPanel = true;
+        $this->amountTendered   = number_format($this->calcGrandTotal(), 2, '.', '');
+        $this->paymentReference = null;
     }
+
+    public function cancelPayment(): void
+    {
+        $this->showPaymentPanel = false;
+        $this->activeMethod     = null;
+        $this->amountTendered   = null;
+        $this->paymentReference = null;
+    }
+
+    // ── Complete sale ─────────────────────────────────────────────────────────
 
     public function completeSale(): void
     {
-        $grandTotal = $this->calcGrandTotal();
-        $tendered   = collect($this->payments)->sum(fn ($p) => (float) ($p['amount'] ?: 0));
-        if ($tendered < $grandTotal && !$this->customerId) {
-            $this->dispatch('notify', type: 'error', message: 'Amount less than total. Assign a customer for credit.');
+        if (empty($this->cart)) {
+            $this->dispatch('notify', type: 'error', message: 'Cart is empty.');
             return;
         }
-        try {
-            DB::transaction(function () use ($grandTotal, $tendered) {
-                $subtotal      = collect($this->cart)->sum('total');
-                $discount      = round($this->globalDiscount, 2);
-                $taxable       = max(0, $subtotal - $discount);
-                $vat           = $this->applyVat ? round($taxable * 0.16, 2) : 0;
-                $changeDue     = max(0, $tendered - $grandTotal);
-                $amountPaid    = min($tendered, $grandTotal);
-                $paymentStatus = $amountPaid >= $grandTotal ? 'paid' : ($amountPaid > 0 ? 'partial' : 'unpaid');
 
+        if (!$this->activeMethod) {
+            $this->dispatch('notify', type: 'error', message: 'Select a payment method.');
+            return;
+        }
+
+        $paymentMethod = PaymentMethod::where('code', $this->activeMethod)->first();
+
+        if ($paymentMethod?->requires_reference && !$this->paymentReference) {
+            $this->dispatch('notify', type: 'error', message: 'Enter a reference/code for this payment method.');
+            return;
+        }
+
+        $grandTotal = $this->calcGrandTotal();
+        $tendered   = (float) ($this->amountTendered ?: 0);
+
+        if ($tendered < $grandTotal) {
+            $this->dispatch('notify', type: 'error', message: 'Amount paid is less than total.');
+            return;
+        }
+
+        $locationId = $this->locationId();
+        if (!$locationId) {
+            $this->dispatch('notify', type: 'error', message: 'Your account has no location assigned. Contact admin.');
+            return;
+        }
+
+        try {
+            DB::transaction(function () use ($grandTotal, $tendered, $locationId, $paymentMethod) {
+                $subtotal  = collect($this->cart)->sum('total');
+                $discount  = round($this->globalDiscount, 2);
+                $taxable   = max(0, $subtotal - $discount);
+                $vat       = $this->applyVat ? round($taxable * 0.16, 2) : 0;
+                $changeDue = round($tendered - $grandTotal, 2);
+
+                // ── Create sale (always cash/instant walk-in, fully paid) ──────
                 $sale = Sale::create([
-                    'customer_id'    => $this->customerId,
-                    'user_id'        => Auth::id(),
-                    'subtotal'       => $subtotal,
-                    'discount_amount'=> $discount,
-                    'vat_amount'     => $vat,
-                    'total'          => $grandTotal,
-                    'amount_paid'    => $amountPaid,
-                    'change_given'   => $changeDue,
-                    'payment_status' => $paymentStatus,
-                    'sale_type'      => 'walk_in',
-                    'include_vat'    => $this->applyVat,
-                    'notes'          => $this->notes,
+                    'customer_id'     => null,
+                    'user_id'         => Auth::id(),
+                    'location_id'     => $locationId,
+                    'subtotal'        => $subtotal,
+                    'discount_amount' => $discount,
+                    'vat_amount'      => $vat,
+                    'total'           => $grandTotal,
+                    'amount_paid'     => $grandTotal,
+                    'change_given'    => $changeDue,
+                    'payment_status'  => 'paid',
+                    'sale_type'       => 'walk_in',
+                    'include_vat'     => $this->applyVat,
+                    'notes'           => $this->notes,
                 ]);
 
                 $this->currentSaleId = $sale->id;
 
+                // ── Sale items + stock deduction ──────────────────────────────
                 foreach ($this->cart as $item) {
                     SaleItem::create([
                         'sale_id'      => $sale->id,
@@ -198,67 +295,65 @@ class PosCart extends Component
                         'discount'     => $item['discount'],
                         'total'        => $item['total'],
                     ]);
+
                     if (!$item['is_service']) {
-                        $product = Product::find($item['product_id']);
-                        $before  = $product->stock_quantity;
-                        $product->decrement('stock_quantity', $item['quantity']);
+                        // Stock lives directly on the product row (each shop
+                        // owns its own Product rows), not in a separate
+                        // location_stocks table — lock and decrement it
+                        // in place, same pattern as StockTransfer::moveStock().
+                        $product = Product::lockForUpdate()->findOrFail($item['product_id']);
+
+                        $before = $product->quantity;
+                        $after  = $before - $item['quantity'];
+
+                        $product->update(['quantity' => $after]);
+
                         StockMovement::create([
-                            'product_id'  => $item['product_id'],
-                            'type'        => 'out',
-                            'source'      => 'sale',
-                            'source_id'   => $sale->id,
-                            'quantity'    => -$item['quantity'],
-                            'stock_before'=> $before,
-                            'stock_after' => $before - $item['quantity'],
-                            'user_id'     => Auth::id(),
+                            'product_id'   => $item['product_id'],
+                            'location_id'  => $locationId,
+                            'type'         => 'sale',
+                            'source'       => 'sale',
+                            'source_id'    => $sale->id,
+                            'quantity'     => -$item['quantity'],
+                            'stock_before' => $before,
+                            'stock_after'  => $after,
+                            'notes'        => "Sold via POS — {$sale->sale_number}",
+                            'user_id'      => Auth::id(),
                         ]);
                     }
                 }
 
-                foreach ($this->payments as $p) {
-                    $amt = (float) ($p['amount'] ?: 0);
-                    if ($amt > 0) {
-                        Payment::create([
-                            'sale_id'   => $sale->id,
-                            'amount'    => $amt,
-                            'method'    => $p['method'],
-                            'reference' => $p['reference'] ?: null,
-                            'user_id'   => Auth::id(),
-                        ]);
-                    }
-                }
+                // ── Payment record ──────────────────────────────────────────────
+                Payment::create([
+                    'sale_id'   => $sale->id,
+                    'amount'    => $grandTotal,
+                    'method'    => $this->activeMethod,
+                    'reference' => $this->paymentReference ?: null,
+                    'user_id'   => Auth::id(),
+                ]);
 
-                // Update any pending M-Pesa transaction to link to this sale
-                \App\Models\MpesaTransaction::where('status', 'completed')
-                    ->whereNull('sale_id')
-                    ->where('amount', $grandTotal)
-                    ->latest()
-                    ->first()?->update(['sale_id' => $sale->id]);
-
-                $customerId    = $this->customerId;
-                $customerName  = $this->customerName ?? 'Walk-in Customer';
-                $customerPhone = $this->customerPhone;
-                $applyVat      = $this->applyVat;
-                $notes         = $this->notes;
+                // ── Auto-generate invoice ─────────────────────────────────────
+                $applyVat = $this->applyVat;
+                $notes    = $this->notes;
 
                 $invoice = Invoice::withoutEvents(function () use (
-                    $sale, $paymentStatus, $subtotal, $discount, $vat,
-                    $grandTotal, $amountPaid, $customerId, $customerName,
-                    $customerPhone, $applyVat, $notes
+                    $sale, $subtotal, $discount, $vat,
+                    $grandTotal, $applyVat, $notes, $locationId
                 ) {
                     $inv = new Invoice([
-                        'customer_id'     => $customerId,
+                        'customer_id'     => null,
                         'sale_id'         => $sale->id,
                         'created_by'      => Auth::id(),
-                        'client_name'     => $customerName,
-                        'client_phone'    => $customerPhone,
-                        'status'          => $paymentStatus === 'paid' ? 'paid' : 'unpaid',
+                        'location_id'     => $locationId,
+                        'client_name'     => 'Walk-in Customer',
+                        'client_phone'    => null,
+                        'status'          => 'paid',
                         'include_vat'     => $applyVat,
                         'subtotal'        => $subtotal,
                         'discount_amount' => $discount,
                         'vat_amount'      => $vat,
                         'total'           => $grandTotal,
-                        'amount_paid'     => $amountPaid,
+                        'amount_paid'     => $grandTotal,
                         'notes'           => $notes,
                         'footer_text'     => 'Accounts are due on demand.',
                     ]);
@@ -282,27 +377,26 @@ class PosCart extends Component
                     ]);
                 }
 
+                // ── Build completed sale data for receipt ─────────────────────
                 $this->completedSale = [
                     'sale_number'    => $sale->sale_number,
                     'invoice_number' => $invoice->invoice_number,
                     'invoice_id'     => $invoice->id,
-                    'customer'       => $this->customerName ?? 'Walk-in Customer',
+                    'customer'       => 'Walk-in Customer',
                     'items'          => $this->cart,
                     'subtotal'       => $subtotal,
                     'discount'       => $discount,
                     'vat'            => $vat,
                     'total'          => $grandTotal,
-                    'tendered'       => $amountPaid,
+                    'tendered'       => $tendered,
                     'change'         => $changeDue,
-                    'payments'       => collect($this->payments)
-                        ->filter(fn ($p) => (float) ($p['amount'] ?: 0) > 0)
-                        ->values()->toArray(),
-                    'cashier' => Auth::user()->name,
-                    'date'    => now()->format('d/m/Y H:i'),
+                    'payment_method' => $paymentMethod?->name ?? ucfirst(str_replace('_', ' ', $this->activeMethod)),
+                    'reference'      => $this->paymentReference,
+                    'cashier'        => Auth::user()->name,
+                    'date'           => now()->format('d/m/Y H:i'),
                 ];
             });
 
-            $this->showPaymentModal = false;
             $this->showReceipt = true;
             $this->dispatch('notify', type: 'success', message: "Sale {$this->completedSale['sale_number']} complete!");
 
@@ -318,6 +412,8 @@ class PosCart extends Component
         $this->completedSale = null;
         $this->clearCart();
     }
+
+    // ── Private helpers ───────────────────────────────────────────────────────
 
     private function calcGrandTotal(): float
     {
@@ -338,54 +434,46 @@ class PosCart extends Component
     private function recalcLine(int $key): void
     {
         $item = $this->cart[$key];
-        $this->cart[$key]['total'] = round(($item['unit_price'] * $item['quantity']) - $item['discount'], 2);
+        $this->cart[$key]['total'] = round(
+            ($item['unit_price'] * $item['quantity']) - $item['discount'],
+            2
+        );
     }
 
-    private function resetPayments(): void
-    {
-        $this->payments = [
-            ['method' => 'cash',          'amount' => '', 'reference' => ''],
-            ['method' => 'mpesa',         'amount' => '', 'reference' => ''],
-            ['method' => 'bank_transfer', 'amount' => '', 'reference' => ''],
-            ['method' => 'cheque',        'amount' => '', 'reference' => ''],
-            ['method' => 'credit',        'amount' => '', 'reference' => ''],
-        ];
-    }
+    // ── Render ────────────────────────────────────────────────────────────────
 
     public function render()
     {
-        $subtotal    = collect($this->cart)->sum('total');
-        $discount    = round($this->globalDiscount, 2);
-        $taxable     = max(0, $subtotal - $discount);
-        $vat         = $this->applyVat ? round($taxable * 0.16, 2) : 0;
-        $grandTotal  = round($taxable + $vat, 2);
-        $tendered    = collect($this->payments)->sum(fn ($p) => (float) ($p['amount'] ?: 0));
-        $change      = max(0, $tendered - $grandTotal);
-        $balanceDue  = max(0, $grandTotal - $tendered);
-        $cartCount   = collect($this->cart)->sum('quantity');
-        $nextSaleRef = $this->nextSaleRef();
+        $subtotal   = collect($this->cart)->sum('total');
+        $discount   = round($this->globalDiscount, 2);
+        $taxable    = max(0, $subtotal - $discount);
+        $vat        = $this->applyVat ? round($taxable * 0.16, 2) : 0;
+        $grandTotal = round($taxable + $vat, 2);
+        $tendered   = (float) ($this->amountTendered ?: 0);
+        $change     = max(0, round($tendered - $grandTotal, 2));
+        $cartCount  = collect($this->cart)->sum('quantity');
 
-        $products = Product::active()
-            ->when($this->search, fn ($q) => $q->search($this->search))
-            ->when($this->categoryId, fn ($q) => $q->where('category_id', $this->categoryId))
-            ->with('category')->orderBy('name')->limit(48)->get();
+        $paymentMethods = PaymentMethod::active()->get();
 
-        $categories = ProductCategory::where('is_active', true)->orderBy('name')->get();
-
-        $customerSuggestions = collect();
-        if (strlen($this->customerSearch) >= 2) {
-            $customerSuggestions = Customer::active()
-                ->where(function ($q) {
-                    $q->where('name', 'like', "%{$this->customerSearch}%")
-                      ->orWhere('company_name', 'like', "%{$this->customerSearch}%")
-                      ->orWhere('phone', 'like', "%{$this->customerSearch}%");
-                })->limit(6)->get();
+        // Search results for the dropdown (only when typing).
+        // Product is already shop-scoped (BelongsToShop global scope), so
+        // every result here already belongs to the active location — its
+        // `quantity` column IS the current stock, no join needed.
+        $searchResults = collect();
+        if (strlen($this->search) >= 2) {
+            $searchResults = Product::active()
+                ->search($this->search)
+                ->limit(8)
+                ->get()
+                ->map(function ($product) {
+                    $product->current_stock = $product->is_service ? null : $product->quantity;
+                    return $product;
+                });
         }
 
         return view('livewire.pos.cart', compact(
             'subtotal', 'discount', 'taxable', 'vat', 'grandTotal',
-            'tendered', 'change', 'balanceDue', 'cartCount',
-            'products', 'categories', 'customerSuggestions', 'nextSaleRef'
+            'tendered', 'change', 'cartCount', 'searchResults', 'paymentMethods'
         ))->layout('layouts.pos');
     }
 }

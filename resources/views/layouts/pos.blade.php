@@ -7,30 +7,84 @@
     <title>Gigateam POS</title>
     @vite(['resources/css/app.css', 'resources/js/app.js'])
     @livewireStyles
+
+    <style>
+        @media print {
+            /* Hide everything on the page */
+            body * {
+                visibility: hidden !important;
+            }
+
+            /* Show only the receipt */
+            #receipt-print,
+            #receipt-print * {
+                visibility: visible !important;
+            }
+
+            /* Position receipt at top-left of the printed page */
+            #receipt-print {
+                position: fixed !important;
+                top: 0 !important;
+                left: 0 !important;
+                width: 100% !important;
+                z-index: 99999 !important;
+                background: #fff !important;
+            }
+
+            /* Hide the Print / PDF / New Sale buttons */
+            .no-print {
+                display: none !important;
+            }
+
+            /* Remove browser default margins on print */
+            @page {
+                margin: 10mm;
+            }
+        }
+    </style>
 </head>
 <body class="h-full bg-gray-950 text-gray-100 antialiased">
 
     {{-- Top navigation bar --}}
-    <nav class="h-12 bg-gray-900 border-b border-gray-800 flex items-center justify-between px-4 shrink-0 z-50">
+    <nav class="h-14 bg-white border-b border-gray-200 flex items-center justify-between px-4 shrink-0 z-50 no-print">
         <div class="flex items-center gap-3">
-            <img src="{{ asset('images/gigateam-logo.png') }}" alt="Gigateam" class="h-8 w-auto">
-            <span class="font-semibold text-white text-sm tracking-wide">Gigateam Solutions</span>
-            <span class="text-gray-600 text-xs mx-1">|</span>
-            <span class="text-gray-400 text-xs">Point of Sale</span>
+            <img src="{{ asset('images/gigateam-logo.png') }}" alt="Gigateam Solutions" class="h-10 w-auto">
+            <div class="flex flex-col justify-center leading-tight">
+                <span style="
+                    font-family: 'Arial Black', 'Arial', sans-serif;
+                    font-size: 1rem;
+                    font-weight: 900;
+                    color: #111111;
+                    letter-spacing: 0.04em;
+                    line-height: 1.2;
+                    text-transform: uppercase;
+                ">Gigateam Solutions Ltd</span>
+                <span style="
+                    font-family: 'Georgia', serif;
+                    font-size: 0.72rem;
+                    font-weight: 600;
+                    font-style: italic;
+                    color: #DC2626;
+                    letter-spacing: 0.02em;
+                    line-height: 1.2;
+                ">Secured &amp; Connected</span>
+            </div>
         </div>
-        <div class="flex items-center gap-4 text-xs text-gray-400">
-            <span id="pos-clock" class="font-mono text-gray-300"></span>
-            <span class="text-gray-600">|</span>
-            <span class="text-gray-300">{{ auth()->user()->name }}</span>
-            <a href="/admin" class="text-red-400 hover:text-red-300 transition text-xs">Admin Panel →</a>
+
+        {{-- RIGHT: Clock, User, Links --}}
+        <div class="flex items-center gap-4 text-xs text-gray-500">
+            <span id="pos-clock" class="font-mono text-gray-700 font-semibold"></span>
+            <span class="text-gray-300">|</span>
+            <span class="text-gray-700">{{ auth()->user()->name }}</span>
+            <a href="/admin" class="text-red-600 hover:text-red-500 transition text-xs font-medium">Admin Panel →</a>
             <form method="POST" action="{{ route('logout') }}">
                 @csrf
-                <button class="text-gray-500 hover:text-red-400 transition text-xs">Logout</button>
+                <button class="text-gray-400 hover:text-red-500 transition text-xs">Logout</button>
             </form>
         </div>
     </nav>
 
-    {{-- Toast notifications — x-data here, listens for Livewire dispatch('notify') --}}
+    {{-- Toast notifications --}}
     <div
         x-data="{ toasts: [] }"
         x-on:notify.window="
@@ -38,7 +92,7 @@
             toasts.push({ id, type: $event.detail.type ?? 'info', message: $event.detail.message ?? '' });
             setTimeout(() => { toasts = toasts.filter(t => t.id !== id) }, 4000);
         "
-        class="fixed top-14 right-4 z-[99999] flex flex-col gap-2 pointer-events-none"
+        class="fixed top-16 right-4 z-[99999] flex flex-col gap-2 pointer-events-none no-print"
     >
         <template x-for="toast in toasts" :key="toast.id">
             <div
@@ -60,14 +114,13 @@
     </div>
 
     {{-- Main content --}}
-    <main class="h-[calc(100vh-3rem)]">
+    <main class="h-[calc(100vh-3.5rem)]">
         {{ $slot }}
     </main>
 
     @livewireScripts
 
     <script>
-        // Live clock
         function tick() {
             const el = document.getElementById('pos-clock');
             if (el) el.textContent = new Date().toLocaleTimeString('en-KE', {
@@ -76,6 +129,25 @@
         }
         tick();
         setInterval(tick, 1000);
+    </script>
+
+    {{-- Service Worker + offline detection --}}
+    <script>
+        // Register Service Worker
+        if ('serviceWorker' in navigator) {
+            navigator.serviceWorker.register('/pos-sw.js', { scope: '/' })
+                .then(reg => console.log('SW registered:', reg.scope))
+                .catch(err => console.log('SW registration failed:', err));
+        }
+
+        // Auto-redirect to offline POS when connection drops
+        window.addEventListener('offline', () => {
+            setTimeout(() => {
+                if (!navigator.onLine) {
+                    window.location.href = '/pos-offline.html';
+                }
+            }, 1500);
+        });
     </script>
 </body>
 </html>

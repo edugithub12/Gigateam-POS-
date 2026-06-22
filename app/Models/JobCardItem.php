@@ -2,11 +2,14 @@
 
 namespace App\Models;
 
+use App\Traits\LogsUserActivity;
+
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 
 class JobCardItem extends Model
 {
+    use LogsUserActivity;
     protected $fillable = [
         'job_card_id', 'product_id', 'description', 'unit',
         'quantity', 'unit_price', 'total', 'source',

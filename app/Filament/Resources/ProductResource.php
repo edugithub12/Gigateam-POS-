@@ -2,6 +2,7 @@
 
 namespace App\Filament\Resources;
 
+use App\Exports\ProductsExport;
 use App\Filament\Resources\ProductResource\Pages;
 use App\Models\Product;
 use App\Models\ProductCategory;
@@ -11,6 +12,7 @@ use Filament\Resources\Resource;
 use Filament\Tables;
 use Filament\Tables\Table;
 use Illuminate\Database\Eloquent\Builder;
+use Maatwebsite\Excel\Facades\Excel;
 
 class ProductResource extends Resource
 {
@@ -20,24 +22,33 @@ class ProductResource extends Resource
     protected static ?int $navigationSort = 2;
     protected static ?string $recordTitleAttribute = 'name';
 
+    // Per-shop catalog: shop managers and cashiers can now create/manage
+    // their own products, not just super admins. Each shop owns its rows.
     public static function canAccess(): bool
     {
-        return auth()->user()?->hasAnyRole(['admin', 'accountant', 'salesperson']) ?? false;
+        return auth()->user()?->hasAnyRole(['super_admin', 'admin', 'accountant', 'salesperson', 'manager']) ?? false;
     }
 
     public static function canCreate(): bool
     {
-        return auth()->user()?->hasRole('admin') ?? false;
+        $user = auth()->user();
+        if ($user?->isSuperAdmin()) return true;
+
+        // Shop managers can add products to their own shop's catalog
+        return $user && activeShopId() && $user->shopRoleAt(activeShopId()) === 'shop_manager';
     }
 
     public static function canEdit($record): bool
     {
-        return auth()->user()?->hasRole('admin') ?? false;
+        $user = auth()->user();
+        if ($user?->isSuperAdmin()) return true;
+
+        return $user && $user->shopRoleAt($record->location_id) === 'shop_manager';
     }
 
     public static function canDelete($record): bool
     {
-        return auth()->user()?->hasRole('admin') ?? false;
+        return self::canEdit($record);
     }
 
     public static function form(Form $form): Form
@@ -59,8 +70,15 @@ class ProductResource extends Resource
                     Forms\Components\TextInput::make('sku')
                         ->label('SKU')
                         ->required()
-                        ->unique(ignoreRecord: true)
-                        ->maxLength(100),
+                        // Unique only within THIS shop's catalog, not globally —
+                        // two shops can both have a product with SKU "PHN-001".
+                        ->unique(
+                            ignoreRecord: true,
+                            modifyRuleUsing: fn ($rule) =>
+                                $rule->where('location_id', activeShopId())
+                        )
+                        ->maxLength(100)
+                        ->helperText('Must be unique within your shop only — other shops may reuse this SKU.'),
 
                     Forms\Components\TextInput::make('brand')
                         ->maxLength(100),
@@ -87,6 +105,21 @@ class ProductResource extends Resource
                     Forms\Components\Textarea::make('description')
                         ->rows(3)
                         ->columnSpanFull(),
+
+                    Forms\Components\FileUpload::make('image')
+                        ->label('Product Image')
+                        ->image()
+                        ->nullable()
+                        ->imageResizeMode('cover')
+                        ->imageCropAspectRatio('1:1')
+                        ->imageResizeTargetWidth('400')
+                        ->imageResizeTargetHeight('400')
+                        ->directory('products')
+                        ->visibility('public')
+                        ->maxSize(2048)
+                        ->dehydrated(fn ($state) => filled($state))
+                        ->helperText('Optional. Only shown in POS — never printed on documents.')
+                        ->columnSpanFull(),
                 ])->columns(2),
 
             Forms\Components\Section::make('Pricing')
@@ -95,12 +128,14 @@ class ProductResource extends Resource
                         ->label('Cost Price (KES)')
                         ->numeric()
                         ->prefix('KES')
+                        ->minValue(0)
                         ->default(0),
 
                     Forms\Components\TextInput::make('selling_price')
                         ->label('Selling Price (KES)')
                         ->numeric()
                         ->prefix('KES')
+                        ->minValue(0)
                         ->required()
                         ->default(0),
 
@@ -108,6 +143,7 @@ class ProductResource extends Resource
                         ->label('Installation Price (KES)')
                         ->numeric()
                         ->prefix('KES')
+                        ->minValue(0)
                         ->default(0),
                 ])->columns(3),
 
@@ -118,20 +154,25 @@ class ProductResource extends Resource
                         ->reactive()
                         ->default(false),
 
-                    Forms\Components\TextInput::make('stock_quantity')
-                        ->label('Current Stock')
+                    // Each shop enters their own opening stock directly —
+                    // there's no shared warehouse quantity anymore.
+                    Forms\Components\TextInput::make('quantity')
+                        ->label('Opening Stock')
                         ->numeric()
                         ->default(0)
-                        ->hidden(fn (Forms\Get $get) => $get('is_service')),
+                        ->required()
+                        ->hidden(fn (Forms\Get $get) => $get('is_service'))
+                        ->helperText('Stock quantity for your shop only. Other shops manage their own stock of the same product separately.'),
 
-                    Forms\Components\TextInput::make('low_stock_threshold')
+                    Forms\Components\TextInput::make('reorder_point')
                         ->label('Low Stock Alert At')
                         ->numeric()
                         ->default(5)
                         ->hidden(fn (Forms\Get $get) => $get('is_service')),
 
                     Forms\Components\TextInput::make('barcode')
-                        ->maxLength(100),
+                        ->maxLength(100)
+                        ->helperText('Optional — used for quick scanning in POS.'),
 
                     Forms\Components\Toggle::make('is_active')
                         ->label('Active')
@@ -142,8 +183,17 @@ class ProductResource extends Resource
 
     public static function table(Table $table): Table
     {
+        $isAdmin = auth()->user()?->isSuperAdmin();
+
         return $table
             ->columns([
+                Tables\Columns\ImageColumn::make('image')
+                    ->label('')
+                    ->circular()
+                    ->defaultImageUrl(null)
+                    ->width(40)
+                    ->height(40),
+
                 Tables\Columns\TextColumn::make('sku')
                     ->label('SKU')
                     ->searchable()
@@ -161,6 +211,14 @@ class ProductResource extends Resource
                     ->badge()
                     ->sortable(),
 
+                // Visible only to super admin viewing "All Shops" — shows
+                // which shop's catalog this row belongs to.
+                Tables\Columns\TextColumn::make('location.name')
+                    ->label('Shop')
+                    ->badge()
+                    ->color('gray')
+                    ->visible(fn () => $isAdmin && activeShopId() === null),
+
                 Tables\Columns\TextColumn::make('brand')
                     ->searchable()
                     ->toggleable(),
@@ -170,19 +228,19 @@ class ProductResource extends Resource
                     ->money('KES')
                     ->sortable(),
 
-                Tables\Columns\TextColumn::make('stock_quantity')
+                // Stock now lives directly on the product row.
+                Tables\Columns\TextColumn::make('quantity')
                     ->label('Stock')
-                    ->sortable()
                     ->alignCenter()
-                    ->color(fn (Product $record): string => match (true) {
-                        $record->is_service    => 'gray',
-                        $record->isOutOfStock() => 'danger',
-                        $record->isLowStock()   => 'warning',
-                        default                 => 'success',
-                    })
-                    ->formatStateUsing(fn (Product $record): string =>
-                        $record->is_service ? 'Service' : (string) $record->stock_quantity
-                    ),
+                    ->formatStateUsing(fn (Product $record) =>
+                        $record->is_service ? 'Service' : (string) $record->quantity
+                    )
+                    ->color(fn (Product $record) => match (true) {
+                        $record->is_service        => 'gray',
+                        $record->isOutOfStock()    => 'danger',
+                        $record->isLowStock()      => 'warning',
+                        default                     => 'success',
+                    }),
 
                 Tables\Columns\IconColumn::make('is_active')
                     ->label('Active')
@@ -203,17 +261,47 @@ class ProductResource extends Resource
                     ->label('Status')
                     ->trueLabel('Active')
                     ->falseLabel('Inactive'),
+
+                Tables\Filters\Filter::make('low_stock')
+                    ->label('Low Stock')
+                    ->query(fn (Builder $query) =>
+                        $query->where('is_service', false)
+                              ->where('quantity', '>', 0)
+                              ->whereColumn('quantity', '<=', 'reorder_point')
+                    )
+                    ->toggle(),
+
+                Tables\Filters\Filter::make('out_of_stock')
+                    ->label('Out of Stock')
+                    ->query(fn (Builder $query) =>
+                        $query->where('is_service', false)->where('quantity', '<=', 0)
+                    )
+                    ->toggle(),
+            ])
+            ->headerActions([
+                Tables\Actions\Action::make('export')
+                    ->label('Export to Excel')
+                    ->icon('heroicon-o-arrow-down-tray')
+                    ->color('success')
+                    ->visible(fn () => auth()->user()?->hasAnyRole(['super_admin', 'admin']))
+                    ->action(fn () => Excel::download(
+                        new ProductsExport(activeShopId()),
+                        'gigateam-products-' . now()->format('Y-m-d') . '.xlsx'
+                    )),
             ])
             ->actions([
+                // "Check Other Locations" removed — under the per-shop catalog
+                // model, products no longer share a row across shops. To see
+                // what other shops carry, use the Network Stock page instead.
                 Tables\Actions\EditAction::make()
-                    ->visible(fn () => auth()->user()?->hasRole('admin')),
+                    ->visible(fn (Product $record) => self::canEdit($record)),
                 Tables\Actions\DeleteAction::make()
-                    ->visible(fn () => auth()->user()?->hasRole('admin')),
+                    ->visible(fn (Product $record) => self::canDelete($record)),
             ])
             ->bulkActions([
                 Tables\Actions\BulkActionGroup::make([
                     Tables\Actions\DeleteBulkAction::make()
-                        ->visible(fn () => auth()->user()?->hasRole('admin')),
+                        ->visible(fn () => auth()->user()?->hasAnyRole(['super_admin', 'admin'])),
                 ]),
             ])
             ->defaultSort('name')
@@ -236,8 +324,14 @@ class ProductResource extends Resource
 
     public static function getNavigationBadge(): ?string
     {
-        $lowStock = Product::lowStock()->count();
-        return $lowStock > 0 ? (string) $lowStock : null;
+        // Product's global ShopScope already filters to the active shop,
+        // or shows everything if super admin has "All Shops" selected.
+        $count = Product::where('is_service', false)
+            ->where('quantity', '>', 0)
+            ->whereColumn('quantity', '<=', 'reorder_point')
+            ->count();
+
+        return $count > 0 ? (string) $count : null;
     }
 
     public static function getNavigationBadgeColor(): ?string

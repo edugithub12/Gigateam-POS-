@@ -2,6 +2,9 @@
 
 namespace App\Models;
 
+use App\Models\Concerns\BelongsToShop;
+use App\Traits\LogsUserActivity;
+
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\SoftDeletes;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
@@ -10,10 +13,13 @@ use Illuminate\Support\Facades\DB;
 
 class Invoice extends Model
 {
+    use LogsUserActivity;
     use SoftDeletes;
+    use BelongsToShop; // provides location(), global shop scope, auto-fill location_id
 
     protected $fillable = [
         'invoice_number', 'customer_id', 'sale_id', 'quotation_id', 'created_by',
+        'location_id', // ← was missing; column exists on the table already
         'client_name', 'client_phone', 'client_email', 'client_address',
         'delivery_number', 'order_number', 'status', 'include_vat',
         'subtotal', 'discount_amount', 'vat_amount', 'total', 'amount_paid',
@@ -49,6 +55,7 @@ class Invoice extends Model
 
     protected static function booted(): void
     {
+        // BelongsToShop::bootBelongsToShop() handles auto-filling location_id.
         static::creating(function (Invoice $invoice) {
             if (empty($invoice->invoice_number)) {
                 $invoice->invoice_number = static::generateNumber();
@@ -69,12 +76,12 @@ class Invoice extends Model
 
     public static function generateNumber(): string
     {
-        // Continues from 23477
-        $seq = DB::table('document_sequences')->where('type', 'invoice')->first();
-        $next = ($seq->last_number ?? 23477) + 1;
-        DB::table('document_sequences')->where('type', 'invoice')
-            ->update(['last_number' => $next, 'updated_at' => now()]);
-        return "INV-{$next}";
+        return DocumentSequence::next('invoice', activeShopId());
+    }
+
+    protected static function getActivityLogName(): string
+    {
+        return 'invoices';
     }
 
     public function customer(): BelongsTo
@@ -96,6 +103,8 @@ class Invoice extends Model
     {
         return $this->belongsTo(User::class, 'created_by');
     }
+
+    // location() relationship now provided by BelongsToShop trait
 
     public function items(): HasMany
     {
@@ -119,6 +128,7 @@ class Invoice extends Model
 
 class InvoiceItem extends Model
 {
+    use LogsUserActivity;
     protected $fillable = [
         'invoice_id', 'product_id', 'sort_order', 'description',
         'unit', 'unit_price', 'cost_price', 'quantity', 'discount', 'total',
@@ -147,7 +157,6 @@ class InvoiceItem extends Model
             $item->total = round(($item->unit_price * $item->quantity) - $item->discount, 2);
         });
 
-        // After each item is saved, recalculate the parent invoice total
         static::saved(function (InvoiceItem $item) {
             $invoice  = $item->invoice;
             $subtotal = $invoice->items()->sum('total');

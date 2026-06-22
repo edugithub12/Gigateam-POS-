@@ -154,6 +154,7 @@ class CustomerResource extends Resource
                     ->falseLabel('Inactive'),
             ])
             ->actions([
+                Tables\Actions\ViewAction::make(),
                 Tables\Actions\EditAction::make(),
                 Tables\Actions\DeleteAction::make()
                     ->visible(fn () => auth()->user()?->hasRole('admin')),
@@ -179,6 +180,7 @@ class CustomerResource extends Resource
             'index'  => Pages\ListCustomers::route('/'),
             'create' => Pages\CreateCustomer::route('/create'),
             'edit'   => Pages\EditCustomer::route('/{record}/edit'),
+            'view'   => Pages\ViewCustomer::route('/{record}'),
         ];
     }
 }

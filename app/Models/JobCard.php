@@ -2,6 +2,7 @@
 
 namespace App\Models;
 
+use App\Traits\LogsUserActivity;
 use App\Notifications\JobCardAssignedNotification;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\SoftDeletes;
@@ -11,6 +12,7 @@ use Illuminate\Support\Facades\DB;
 
 class JobCard extends Model
 {
+    use LogsUserActivity;
     use SoftDeletes;
 
     protected $fillable = [
@@ -79,25 +81,15 @@ class JobCard extends Model
             }
         });
 
-        // Notify technician when assigned or reassigned
         static::updated(function (JobCard $job) {
             if ($job->wasChanged('technician_id') && $job->technician_id) {
-                $technician = $job->technician;
-                // Notify the linked user account if exists
-                if ($technician && $technician->user_id) {
-                    $user = User::find($technician->user_id);
-                    $user?->notify(new JobCardAssignedNotification($job));
-                }
+                $job->technician?->notify(new JobCardAssignedNotification($job));
             }
         });
 
         static::created(function (JobCard $job) {
             if ($job->technician_id) {
-                $technician = $job->technician;
-                if ($technician && $technician->user_id) {
-                    $user = User::find($technician->user_id);
-                    $user?->notify(new JobCardAssignedNotification($job));
-                }
+                $job->technician?->notify(new JobCardAssignedNotification($job));
             }
         });
     }
@@ -113,14 +105,20 @@ class JobCard extends Model
         return "JOB-{$year}{$month}-" . str_pad($next, 4, '0', STR_PAD_LEFT);
     }
 
+    protected static function getActivityLogName(): string
+    {
+        return 'job_cards';
+    }
+
+    // Now points to User directly
+    public function technician(): BelongsTo
+    {
+        return $this->belongsTo(User::class, 'technician_id');
+    }
+
     public function customer(): BelongsTo
     {
         return $this->belongsTo(Customer::class);
-    }
-
-    public function technician(): BelongsTo
-    {
-        return $this->belongsTo(Technician::class);
     }
 
     public function sale(): BelongsTo

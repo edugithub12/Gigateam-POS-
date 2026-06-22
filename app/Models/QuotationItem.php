@@ -2,11 +2,14 @@
 
 namespace App\Models;
 
+use App\Traits\LogsUserActivity;
+
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 
 class QuotationItem extends Model
 {
+    use LogsUserActivity;
     protected $fillable = [
         'quotation_id', 'product_id', 'sort_order', 'description',
         'unit', 'unit_price', 'cost_price', 'quantity', 'discount', 'total',

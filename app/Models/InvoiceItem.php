@@ -2,11 +2,14 @@
 
 namespace App\Models;
 
+use App\Traits\LogsUserActivity;
+
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 
 class InvoiceItem extends Model
 {
+    use LogsUserActivity;
     protected $fillable = [
         'invoice_id', 'product_id', 'sort_order', 'description',
         'unit', 'unit_price', 'cost_price', 'quantity', 'discount', 'total',

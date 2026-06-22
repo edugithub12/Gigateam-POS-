@@ -10,7 +10,9 @@ class LowStockNotification extends Notification
 {
     use Queueable;
 
-    public function __construct(public Product $product) {}
+    public function __construct(
+        public Product $product,
+    ) {}
 
     public function via(object $notifiable): array
     {
@@ -19,22 +21,29 @@ class LowStockNotification extends Notification
 
     public function toDatabase(object $notifiable): array
     {
-        $isOut = $this->product->stock_quantity <= 0;
+        // Stock lives directly on the (shop-scoped) Product row now —
+        // no separate LocationStock lookup needed.
+        $qty       = $this->product->quantity;
+        $threshold = $this->product->reorder_point;
+        $shopName  = $this->product->location?->name ?? 'Unknown Shop';
+        $isOut     = $qty <= 0;
 
         return [
             'type'  => 'low_stock',
-            'title' => $isOut ? 'Product Out of Stock!' : 'Low Stock Alert',
+            'title' => $isOut ? 'Out of Stock!' : 'Low Stock Alert',
             'body'  => $isOut
-                ? "{$this->product->name} is out of stock. Please restock immediately."
-                : "{$this->product->name} is running low — only {$this->product->stock_quantity} {$this->product->unit} remaining.",
+                ? "{$this->product->name} is out of stock at {$shopName}. Please arrange a transfer or restock."
+                : "{$this->product->name} is running low at {$shopName} — only {$qty} {$this->product->unit} remaining (reorder at {$threshold}).",
             'url'   => '/admin/products/' . $this->product->id . '/edit',
-            'icon'  => $isOut ? '🔴' : '🟠',
+            'icon'  => $isOut ? 'danger' : 'warning',
             'color' => $isOut ? 'danger' : 'warning',
             'meta'  => [
                 'product_id'    => $this->product->id,
                 'product_name'  => $this->product->name,
-                'stock'         => $this->product->stock_quantity,
-                'threshold'     => $this->product->low_stock_threshold,
+                'location_id'   => $this->product->location_id,
+                'location_name' => $shopName,
+                'stock'         => $qty,
+                'threshold'     => $threshold,
             ],
         ];
     }

@@ -2,11 +2,14 @@
 
 namespace App\Models;
 
+use App\Traits\LogsUserActivity;
+
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 
 class MpesaTransaction extends Model
 {
+    use LogsUserActivity;
     protected $fillable = [
         'merchant_request_id',
         'checkout_request_id',

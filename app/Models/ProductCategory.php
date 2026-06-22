@@ -2,11 +2,14 @@
 
 namespace App\Models;
 
+use App\Traits\LogsUserActivity;
+
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\HasMany;
 
 class ProductCategory extends Model
 {
+    use LogsUserActivity;
     protected $fillable = [
         'name', 'slug', 'description', 'is_active',
     ];

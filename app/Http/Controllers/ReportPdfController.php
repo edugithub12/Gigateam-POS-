@@ -15,13 +15,22 @@ class ReportPdfController extends Controller
 {
     public function __construct(protected PdfService $pdf) {}
 
-    // ─────────────────────────────────────────────────────────────────────────
-    //  SALES REPORT
-    // ─────────────────────────────────────────────────────────────────────────
+    // ── SALES REPORT ──────────────────────────────────────────────────────────
+
     public function sales(Request $request)
     {
         $from = $request->get('from', Carbon::now()->startOfMonth()->format('Y-m-d'));
         $to   = $request->get('to',   Carbon::now()->format('Y-m-d'));
+
+        activity()
+            ->causedBy(auth()->user())
+            ->withProperties([
+                'report' => 'Sales Report',
+                'from'   => $from,
+                'to'     => $to,
+                'ip'     => $request->ip(),
+            ])
+            ->log("Downloaded PDF — Sales Report ({$from} to {$to})");
 
         $sales = Sale::whereBetween(DB::raw('DATE(created_at)'), [$from, $to])
             ->select(
@@ -53,15 +62,23 @@ class ReportPdfController extends Controller
         );
     }
 
-    // ─────────────────────────────────────────────────────────────────────────
-    //  VAT REPORT
-    // ─────────────────────────────────────────────────────────────────────────
+    // ── VAT REPORT ────────────────────────────────────────────────────────────
+
     public function vat(Request $request)
     {
         $month = $request->get('month', Carbon::now()->format('m'));
         $year  = $request->get('year',  Carbon::now()->format('Y'));
         $from  = Carbon::createFromDate($year, $month, 1)->startOfMonth();
         $to    = $from->copy()->endOfMonth();
+
+        activity()
+            ->causedBy(auth()->user())
+            ->withProperties([
+                'report' => 'VAT Report',
+                'period' => $from->format('F Y'),
+                'ip'     => $request->ip(),
+            ])
+            ->log('Downloaded PDF — VAT Report (' . $from->format('F Y') . ')');
 
         $salesVat = Sale::where('include_vat', true)
             ->whereBetween('created_at', [$from, $to])
@@ -95,9 +112,8 @@ class ReportPdfController extends Controller
         );
     }
 
-    // ─────────────────────────────────────────────────────────────────────────
-    //  CUSTOMER STATEMENT
-    // ─────────────────────────────────────────────────────────────────────────
+    // ── CUSTOMER STATEMENT ────────────────────────────────────────────────────
+
     public function statement(Request $request)
     {
         $customerId = $request->get('customer');
@@ -105,6 +121,18 @@ class ReportPdfController extends Controller
         $to   = $request->get('to',   Carbon::now()->format('Y-m-d'));
 
         $customer = Customer::findOrFail($customerId);
+
+        activity()
+            ->causedBy(auth()->user())
+            ->performedOn($customer)
+            ->withProperties([
+                'report'   => 'Customer Statement',
+                'customer' => $customer->name,
+                'from'     => $from,
+                'to'       => $to,
+                'ip'       => $request->ip(),
+            ])
+            ->log("Downloaded PDF — Statement for {$customer->name} ({$from} to {$to})");
 
         $lines = [];
 

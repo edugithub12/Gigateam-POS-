@@ -2,18 +2,22 @@
 
 namespace App\Models;
 
+use App\Models\Concerns\BelongsToShop;
+use App\Traits\LogsUserActivity;
+
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\SoftDeletes;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\HasMany;
-use Illuminate\Support\Facades\DB;
 
 class PurchaseOrder extends Model
 {
+    use LogsUserActivity;
     use SoftDeletes;
+    use BelongsToShop; // provides location(), global shop scope, auto-fill location_id
 
     protected $fillable = [
-        'po_number', 'supplier_id', 'created_by', 'status',
+        'po_number', 'supplier_id', 'created_by', 'location_id', 'status',
         'total', 'notes', 'expected_date', 'received_at',
     ];
 
@@ -25,15 +29,10 @@ class PurchaseOrder extends Model
 
     protected static function booted(): void
     {
+        // BelongsToShop::bootBelongsToShop() handles auto-filling location_id.
         static::creating(function (PurchaseOrder $po) {
             if (empty($po->po_number)) {
-                $seq  = DB::table('document_sequences')->where('type', 'purchase_order')->first();
-                $next = ($seq->last_number ?? 0) + 1;
-                DB::table('document_sequences')->where('type', 'purchase_order')
-                    ->update(['last_number' => $next, 'updated_at' => now()]);
-                $year  = now()->format('Y');
-                $month = now()->format('m');
-                $po->po_number = "PO-{$year}{$month}-" . str_pad($next, 4, '0', STR_PAD_LEFT);
+                $po->po_number = DocumentSequence::next('purchase_order', activeShopId());
             }
         });
     }
@@ -47,6 +46,8 @@ class PurchaseOrder extends Model
     {
         return $this->belongsTo(User::class, 'created_by');
     }
+
+    // location() relationship now provided by BelongsToShop trait
 
     public function items(): HasMany
     {

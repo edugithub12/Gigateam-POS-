@@ -2,6 +2,8 @@
 
 namespace App\Models;
 
+use App\Traits\LogsUserActivity;
+
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\SoftDeletes;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
@@ -10,6 +12,7 @@ use Illuminate\Support\Facades\DB;
 
 class DeliveryNote extends Model
 {
+    use LogsUserActivity;
     use SoftDeletes;
 
     protected $fillable = [
@@ -65,6 +68,11 @@ class DeliveryNote extends Model
         return "DN-{$year}{$month}-" . str_pad($next, 4, '0', STR_PAD_LEFT);
     }
 
+    protected static function getActivityLogName(): string
+    {
+        return 'delivery_notes';
+    }
+
     public function customer(): BelongsTo
     {
         return $this->belongsTo(Customer::class);
@@ -105,6 +113,7 @@ class DeliveryNote extends Model
 
 class DeliveryNoteItem extends Model
 {
+    use LogsUserActivity;
     protected $fillable = [
         'delivery_note_id', 'product_id', 'sort_order',
         'description', 'unit', 'quantity', 'notes',
